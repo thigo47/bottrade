@@ -3,14 +3,11 @@ import time
 import requests
 import pandas as pd
 import plotly.graph_objects as go
-import statistics
 from datetime import datetime
 
 # ==========================================================
-# 🔑 ESTADO DA SESSÃO
+# 🔑 CONFIGURAÇÕES DE ALTA FIDELIDADE (PRE-REAL)
 # ==========================================================
-if "sessao_http" not in st.session_state:
-    st.session_state.sessao_http = requests.Session()
 if "resultados_trades" not in st.session_state:
     st.session_state.resultados_trades = []
 if "running" not in st.session_state:
@@ -18,140 +15,164 @@ if "running" not in st.session_state:
 if "saldo_demo" not in st.session_state:
     st.session_state.saldo_demo = 1000.0
 
-# ==========================================================
-# ⚙️ FUNÇÕES DE APOIO
-# ==========================================================
-def formatar_moeda(valor, moeda_ref):
-    if moeda_ref == "BRL":
-        return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
-    return f"$ {valor:,.2f}"
+# Simulação de custo real: Taxa da rede + Slippage médio
+TAXA_EXECUCAO_SIMULADA = 0.01 # 1% de custo por operação
 
-def obter_dados_moeda(address):
+# ==========================================================
+# ⚙️ MOTORES DE ANALISE (SIMULANDO WEB3)
+# ==========================================================
+def analisar_seguranca_token(address):
+    """Simula a checagem de Rugcheck/Honeypot"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{address}"
-        response = st.session_state.sessao_http.get(url, timeout=5)
-        pair = response.json()['pairs'][0]
+        res = requests.get(url, timeout=5).json()
+        pair = res['pairs'][0]
+        
+        # Simulando critérios de segurança reais
+        liquidez = pair.get('liquidity', {}).get('usd', 0)
+        mkt_cap = pair.get('fdv', 0)
+        
+        status = "✅ SEGURO"
+        if liquidez < 10000: status = "⚠️ BAIXA LIQUIDEZ"
+        if mkt_cap < 50000: status = "🚨 ALTO RISCO (RUG)"
+        
         return {
-            "nome": pair['baseToken']['symbol'].upper(), 
-            "preco": float(pair['priceUsd'])
+            "nome": pair['baseToken']['symbol'].upper(),
+            "preco": float(pair['priceUsd']),
+            "status": status,
+            "liquidez": liquidez
         }
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE
+# 🖥️ INTERFACE PROFISSIONAL
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro", layout="wide")
+st.set_page_config(page_title="Sniper Pro Terminal", layout="wide")
 
 with st.sidebar:
-    st.header("⚙️ Configurações")
+    st.header("⚡ Terminal de Execução")
+    moeda_ref = st.radio("Moeda:", ["USD", "BRL"])
+    taxa_c = 5.05 if moeda_ref == "BRL" else 1.0
     
-    # EDITAR SALDO
-    novo_saldo = st.number_input("Editar Saldo Carteira:", value=float(st.session_state.saldo_demo))
-    if st.button("Atualizar Saldo"):
-        st.session_state.saldo_demo = novo_saldo
-        st.rerun()
-        
     st.divider()
-    moeda_ref = st.radio("Exibir valores em:", ["USD", "BRL"])
-    taxa = 5.05 if moeda_ref == "BRL" else 1.0
+    st.subheader("Configurações de Rede")
+    prioridade = st.select_slider("Taxa de Prioridade (Jito):", ["Baixa", "Média", "Turbo"])
+    slippage = st.slider("Slippage Máximo (%)", 0.5, 10.0, 1.0)
     
-    if st.button("Limpar Tudo"):
+    if st.button("Resetar Sistema"):
+        st.session_state.saldo_demo = 1000.0
         st.session_state.resultados_trades = []
-        st.session_state.running = False
         st.rerun()
 
+# --- TELA INICIAL ---
 if not st.session_state.running:
-    st.title("🤖 Sniper Dashboard")
-    st.metric("Banca Disponível", formatar_moeda(st.session_state.saldo_demo * taxa, moeda_ref))
+    st.title("🛡️ Sniper Pro - Alpha Mode")
     
-    ca = st.text_input("Cole o CA do Token:")
-    val_in = st.number_input(f"Valor por Trade ({moeda_ref}):", value=10.0)
+    # Dashboard de Banca
+    col_b1, col_b2 = st.columns(2)
+    col_b1.metric("Saldo em Carteira", formatar_moeda(st.session_state.saldo_demo * taxa_c, moeda_ref) if 'formatar_moeda' in globals() else f"${st.session_state.saldo_demo:.2f}")
     
-    if st.button("🚀 INICIAR OPERAÇÕES", use_container_width=True, type="primary"):
-        if ca:
-            dados = obter_dados_moeda(ca)
-            if dados:
-                st.session_state.token_nome = dados['nome']
-                st.session_state.investimento_usd = val_in / taxa
-                st.session_state.ca_ativo = ca
-                st.session_state.running = True
-                st.rerun()
+    ca = st.text_input("Insira o Mint Address (CA) da Solana:")
+    
+    if ca:
+        analise = analisar_seguranca_token(ca)
+        if analise:
+            st.info(f"Token Detectado: {analise['nome']} | Segurança: {analise['status']}")
+            st.write(f"Liquidez em Pool: ${analise['liquidez']:,.2f}")
+            
+            valor_invest = st.number_input(f"Montante por Ordem ({moeda_ref}):", value=10.0)
+            
+            if analise['status'] == "✅ SEGURO":
+                if st.button("🚀 EXECUTAR ESTRATÉGIA", use_container_width=True, type="primary"):
+                    st.session_state.token_nome = analise['nome']
+                    st.session_state.invest_usd = valor_invest / taxa_c
+                    st.session_state.ca_ativo = ca
+                    st.session_state.running = True
+                    st.rerun()
+            else:
+                st.warning("O robô bloqueou a operação por risco de segurança.")
+        else:
+            st.error("Contrato não encontrado na rede.")
 
+# --- TELA DE EXECUÇÃO ---
 else:
-    # --- TELA DE EXECUÇÃO ---
-    st.header(f"⚡ Operando {st.session_state.token_nome}")
-    
-    if st.button("🛑 PARAR BOT", use_container_width=True):
+    st.header(f"🛰️ Conectado: {st.session_state.token_nome}")
+    st.caption(f"Slippage: {slippage}% | Prioridade: {prioridade} | Modo: Emulação Real")
+
+    if st.button("🛑 CANCELAR TODAS AS ORDENS", use_container_width=True):
         st.session_state.running = False
         st.rerun()
 
-    c1, c2 = st.columns(2)
-    pnl_display = c1.empty()
-    lucro_display = c1.empty()
-    price_display = c2.empty()
-    banca_display = c2.empty()
-
+    # Métricas de Alta Velocidade
+    m1, m2, m3 = st.columns(3)
+    pnl_m = m1.empty()
+    lucro_m = m2.empty()
+    banca_m = m3.empty()
+    
     grafico_place = st.empty()
     
     st.divider()
-    # Containers para evitar erro de ID duplicado
-    col_tab, col_pie = st.columns([2, 1])
-    tabela_resumo = col_tab.empty()
-    pizza_resumo = col_pie.empty()
+    c_tab, c_pie = st.columns([2, 1])
+    t_resumo = c_tab.empty()
+    p_resumo = c_pie.empty()
 
-    invest_usd = st.session_state.investimento_usd
+    invest_usd = st.session_state.invest_usd
     ca_ativo = st.session_state.ca_ativo
 
     for t_num in range(len(st.session_state.resultados_trades) + 1, 11):
         if not st.session_state.running: break
         
-        d_init = obter_dados_moeda(ca_ativo)
-        if not d_init: continue
-        p_entrada = d_init['preco']
-        precos_hist = [p_entrada]
+        d = analisar_seguranca_token(ca_ativo)
+        if not d: continue
+        p_entrada = d['preco']
+        hist = [p_entrada]
         
         while st.session_state.running:
-            atual = obter_dados_moeda(ca_ativo)
-            if atual:
-                p_atual = atual['preco']
-                precos_hist.append(p_atual)
-                pnl = ((p_atual / p_entrada) - 1) * 100
-                lucro_usd = invest_usd * (pnl / 100)
+            d_atual = analisar_seguranca_token(ca_ativo)
+            if d_atual:
+                p_atual = d_atual['preco']
+                hist.append(p_atual)
+                pnl_bruto = ((p_atual / p_entrada) - 1) * 100
                 
-                # Update Dashboard
-                pnl_display.metric(f"Trade #{t_num}", f"{pnl:+.2f}%")
-                lucro_display.metric("Resultado", formatar_moeda(lucro_usd * taxa, moeda_ref))
-                price_display.metric("Preço", f"${p_atual:.8f}")
-                banca_display.metric("Banca", formatar_moeda(st.session_state.saldo_demo * taxa, moeda_ref))
+                # Simulando Lucro Líquido (descontando taxas de entrada/saída)
+                lucro_bruto_usd = invest_usd * (pnl_bruto / 100)
+                taxas_simuladas = invest_usd * TAXA_EXECUCAO_SIMULADA
+                lucro_liquido_usd = lucro_bruto_usd - taxas_simuladas
+                
+                # Update UI
+                pnl_m.metric(f"Trade #{t_num}", f"{pnl_bruto:+.2f}%")
+                lucro_m.metric("P&L Líquido (Estimado)", f"${lucro_liquido_usd:+.2f}")
+                banca_m.metric("Banca", f"${st.session_state.saldo_demo:.2f}")
 
                 with grafico_place.container():
-                    fig = go.Figure(data=[go.Scatter(y=precos_hist[-40:], mode='lines', line=dict(color='#00ff00' if pnl > 0 else '#ff0000', width=3))])
-                    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(visible=False))
-                    # KEY ÚNICA PARA O GRÁFICO DE LINHA
-                    st.plotly_chart(fig, use_container_width=True, key=f"line_{t_num}_{time.time()}", config={'displayModeBar': False})
+                    fig = go.Figure(data=[go.Scatter(y=hist[-50:], mode='lines', line=dict(color='#00ff00' if pnl_bruto > 0 else '#ff0000', width=2))])
+                    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0))
+                    st.plotly_chart(fig, use_container_width=True, key=f"L_{t_num}_{time.time()}", config={'displayModeBar': False})
 
-                # Tabela e Pizza
+                # Histórico e Pizza
                 if st.session_state.resultados_trades:
-                    df_res = pd.DataFrame(st.session_state.resultados_trades)
-                    tabela_resumo.table(df_res)
-                    
-                    # CORREÇÃO DO ERRO: Adicionando Key única ao gráfico de pizza
-                    counts = df_res['STATUS'].value_counts()
-                    fig_p = go.Figure(data=[go.Pie(labels=counts.index, values=counts.values, hole=.3, marker_colors=['#00ff00', '#ff0000'])])
-                    fig_p.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
-                    pizza_resumo.plotly_chart(fig_p, use_container_width=True, key=f"pizza_{t_num}_{time.time()}")
+                    df = pd.DataFrame(st.session_state.resultados_trades)
+                    t_resumo.table(df)
+                    counts = df['RESULT'].value_counts()
+                    fig_p = go.Figure(data=[go.Pie(labels=counts.index, values=counts.values, hole=.4, marker_colors=['#00ecff', '#ff0055'])])
+                    fig_p.update_layout(template="plotly_dark", height=180, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
+                    p_resumo.plotly_chart(fig_p, use_container_width=True, key=f"P_{t_num}_{time.time()}")
 
-                # Saída (2% Win ou 3% Loss)
-                if pnl >= 2.0 or pnl <= -3.0:
-                    st.session_state.saldo_demo += lucro_usd
+                # Saída lógica (2% profit ou 3% stop)
+                if pnl_bruto >= 2.0 or pnl_bruto <= -3.0:
+                    st.session_state.saldo_demo += lucro_liquido_usd
                     st.session_state.resultados_trades.insert(0, {
-                        "TRADE": f"#{t_num}",
-                        "STATUS": "WIN" if pnl > 0 else "LOSS",
-                        "VALOR": formatar_moeda(lucro_usd * taxa, moeda_ref),
-                        "PNL %": f"{pnl:+.2f}%"
+                        "HORA": datetime.now().strftime("%H:%M:%S"),
+                        "RESULT": "WIN" if lucro_liquido_usd > 0 else "LOSS",
+                        "VALOR NET": f"${lucro_liquido_usd:+.2f}",
+                        "PNL %": f"{pnl_bruto:+.2f}%"
                     })
                     break
-            time.sleep(0.7)
+            time.sleep(0.5)
     
     st.session_state.running = False
     st.rerun()
+
+def formatar_moeda(v, m):
+    if m == "BRL": return f"R$ {v:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+    return f"$ {v:,.2f}"
