@@ -33,9 +33,16 @@ def obter_preco_atual(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE MINIMALISTA
+# 🖥️ INTERFACE CORRIGIDA
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro Minimal", layout="wide")
+st.set_page_config(page_title="Sniper Minimal v9.1", layout="wide")
+
+# CSS para forçar o visual minimalista e esconder erros de Markdown
+st.markdown("""
+    <style>
+    .trade-row { font-family: monospace; font-size: 16px; margin-bottom: 5px; }
+    </style>
+    """, unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("⚙️ Config")
@@ -51,7 +58,7 @@ with st.sidebar:
         st.rerun()
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Minimal v9")
+    st.title("🛡️ Sniper Minimal v9.1")
     st.metric("Banca", formatar_moeda(st.session_state.saldo_demo, moeda_ref))
     
     ca = st.text_input("Token CA:")
@@ -64,18 +71,17 @@ if not st.session_state.running:
             st.session_state.running = True
             st.rerun()
 else:
-    # --- CABEÇALHO LÍPIDO ---
-    c_head1, c_head2 = st.columns([3, 1])
-    c_head1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100")
-    if c_head2.button("🛑 PARAR"):
+    # --- CABEÇALHO ---
+    col_c1, col_c2 = st.columns([4, 1])
+    col_c1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100")
+    if col_c2.button("🛑 PARAR"):
         st.session_state.running = False
         st.rerun()
 
-    # Grid de Trades (10 Slots Minimalistas)
+    # Placeholders para os 10 slots
     slots_visuais = [st.empty() for _ in range(10)]
 
     st.divider()
-    # Resumo
     col_t, col_p = st.columns([2, 1])
     t_resumo = col_t.empty()
     p_pizza = col_p.empty()
@@ -84,9 +90,7 @@ else:
     p_base = obter_preco_atual(ca_ativo)
     
     if p_base:
-        trades = []
-        for i in range(10):
-            trades.append({"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": ""})
+        trades = [{"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": ""} for i in range(10)]
 
         while st.session_state.running and any(t['ativo'] for t in trades):
             p_agora = obter_preco_atual(ca_ativo)
@@ -109,17 +113,19 @@ else:
                             "PNL %": f"{t['pnl']:.2f}%"
                         })
 
-                    # VISUAL MINIMALISTA: [Valor] | [PNL%] | [Dinheiro]
+                    # VISUAL CORRIGIDO
                     cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
-                    simbolo_m = "R$" if moeda_ref == "BRL" else "$"
-                    txt_pnl = f"{t['pnl']:+.2f}%"
-                    txt_fin = f"{simbolo_m} {valor_pnl_finan:+.2f}"
+                    simbolo = "R$" if moeda_ref == "BRL" else "$"
                     status_icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
+                    invest_exibicao = st.session_state.invest_slot * taxa_exibicao
                     
+                    # Usando st.markdown com unsafe_allow_html=True corretamente em cada slot
                     slots_visuais[i].markdown(
-                        f"**{status_icon} {simbolo_m} {st.session_state.invest_slot * taxa_exibicao:.1f}** &nbsp;&nbsp; "
-                        f"<span style='color:{cor}; font-weight:bold;'>{txt_pnl}</span> &nbsp;&nbsp; "
-                        f"<span style='color:{cor};'>{txt_fin}</span>", 
+                        f"""<div class='trade-row'>
+                        {status_icon} <b>{simbolo} {invest_exibicao:.2f}</b> &nbsp;&nbsp; 
+                        <span style='color:{cor}; font-weight:bold;'>{t['pnl']:+.2f}%</span> &nbsp;&nbsp; 
+                        <span style='color:{cor};'>{simbolo} {valor_pnl_finan:+.2f}</span>
+                        </div>""", 
                         unsafe_allow_html=True
                     )
 
