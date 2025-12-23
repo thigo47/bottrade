@@ -31,26 +31,23 @@ def obter_dados_token(address):
         url = f"https://api.dexscreener.com/latest/dex/tokens/{address}"
         res = requests.get(url, timeout=2).json()
         pair = res['pairs'][0]
-        return {
-            "nome": pair['baseToken']['symbol'].upper(),
-            "preco": float(pair['priceUsd'])
-        }
+        return {"nome": pair['baseToken']['symbol'].upper(), "preco": float(pair['priceUsd'])}
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v10.1 - FIXING REAL-TIME BALANCE
+# 🖥️ INTERFACE v10.2
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v10.1", layout="wide")
+st.set_page_config(page_title="Sniper Pro v10.2", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configuração")
     moeda_ref = st.radio("Moeda de Operação:", ["USD", "BRL"])
     
-    valor_input = st.number_input(f"Banca Atual ({moeda_ref}):", 
-                                  value=float(st.session_state.saldo_usd * (TAXA_BRL if moeda_ref == "BRL" else 1.0)))
+    val_banca = st.number_input(f"Banca Atual ({moeda_ref}):", 
+                                value=float(st.session_state.saldo_usd * (TAXA_BRL if moeda_ref == "BRL" else 1.0)))
     
     if st.button("Atualizar Banca"):
-        st.session_state.saldo_usd = valor_input / (TAXA_BRL if moeda_ref == "BRL" else 1.0)
+        st.session_state.saldo_usd = val_banca / (TAXA_BRL if moeda_ref == "BRL" else 1.0)
         st.rerun()
 
     st.divider()
@@ -65,22 +62,19 @@ with st.sidebar:
 taxa_view = TAXA_BRL if moeda_ref == "BRL" else 1.0
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Pro v10.1")
-    st.metric("Banca em Espera", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
+    st.title("🛡️ Sniper Pro v10.2")
+    st.markdown(f"### 👛 Saldo: {formatar_moeda(st.session_state.saldo_usd, moeda_ref)}")
     
     ca = st.text_input("Token CA (Memecoin):")
-    invest_input = st.number_input(f"Investimento por Ordem ({moeda_ref}):", value=10.0 * taxa_view)
+    invest_input = st.number_input(f"Investimento p/ Ordem ({moeda_ref}):", value=10.0 * taxa_view)
     
-    invest_total_necessario_usd = (invest_input / taxa_view) * 10
+    invest_total_usd = (invest_input / taxa_view) * 10
     
     if st.button("🚀 INICIAR 100 CICLOS", use_container_width=True, type="primary"):
         dados = obter_dados_token(ca)
-        if not ca:
-            st.error("Insira o CA.")
-        elif not dados:
-            st.error("Token inválido.")
-        elif invest_total_necessario_usd > st.session_state.saldo_usd:
-            st.error(f"Saldo insuficiente.")
+        if not ca: st.error("Insira o CA.")
+        elif not dados: st.error("Token inválido.")
+        elif invest_total_usd > st.session_state.saldo_usd: st.error("Saldo insuficiente.")
         else:
             st.session_state.token_nome = dados['nome']
             st.session_state.ca_ativo = ca
@@ -88,15 +82,15 @@ if not st.session_state.running:
             st.session_state.running = True
             st.rerun()
 else:
-    # --- CABEÇALHO COM SALDO REAL-TIME FORÇADO ---
-    header_col1, header_col2, header_col3 = st.columns([2, 1, 1.5])
+    # --- CABEÇALHO LÍPIDO ---
+    h_col1, h_col2 = st.columns([3, 1])
     
-    header_col1.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
+    h_col1.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
     
-    # Placeholder fixo para o saldo
-    placeholder_saldo = header_col3.empty()
-    # Botão de parar abaixo do saldo ou ao lado
-    if header_col2.button("🛑 PARAR"):
+    # SALDO MINIMALISTA COM EMOJI
+    placeholder_saldo = h_col2.empty()
+    
+    if st.button("🛑 PARAR OPERAÇÃO", use_container_width=True):
         st.session_state.running = False
         st.rerun()
 
@@ -110,10 +104,10 @@ else:
         p_base = dados_token['preco']
         trades = [{"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": "", "liq": 0.0} for i in range(10)]
 
-        # Loop principal do Ciclo
         while st.session_state.running and any(t['ativo'] for t in trades):
-            # 1. ATUALIZAÇÃO DO SALDO NO TOPO (Imediata)
-            placeholder_saldo.metric("Carteira Real-Time", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
+            # Atualização do Saldo Minimalista
+            txt_saldo = formatar_moeda(st.session_state.saldo_usd, moeda_ref)
+            placeholder_saldo.markdown(f"<h3 style='text-align:right; margin:0;'>👛 {txt_saldo}</h3>", unsafe_allow_html=True)
             
             dados_loop = obter_dados_token(st.session_state.ca_ativo)
             if not dados_loop: continue
@@ -122,7 +116,7 @@ else:
             for i, t in enumerate(trades):
                 if t['ativo']:
                     t['pnl'] = ((p_agora / t['entrada']) - 1) * 100
-                    valor_finan = (st.session_state.invest_usd * (t['pnl']/100)) * taxa_view
+                    v_finan = (st.session_state.invest_usd * (t['pnl']/100)) * taxa_view
                     
                     if t['pnl'] >= alvo_gain or t['pnl'] <= -stop_loss:
                         t['ativo'] = False
@@ -130,15 +124,14 @@ else:
                         t['liq'] = (st.session_state.invest_usd * (t['pnl']/100)) - (st.session_state.invest_usd * TAXA_EXECUCAO_SIMULADA)
                         st.session_state.saldo_usd += t['liq']
 
-                    # Visual minimalista dos trades
                     cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
                     simbolo = "R$" if moeda_ref == "BRL" else "$"
                     icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
                     
                     slots_visuais[i].markdown(
-                        f"<div style='font-family:monospace;'>{icon} <b>{simbolo} {st.session_state.invest_usd * taxa_view:.2f}</b> &nbsp;&nbsp; "
+                        f"<div style='font-family:monospace; font-size:15px;'>{icon} <b>{simbolo} {st.session_state.invest_usd * taxa_view:.2f}</b> &nbsp;&nbsp; "
                         f"<span style='color:{cor};'>{t['pnl']:+.2f}%</span> &nbsp;&nbsp; "
-                        f"<span style='color:{cor};'>{simbolo} {valor_finan:+.2f}</span></div>", 
+                        f"<span style='color:{cor};'>{simbolo} {v_finan:+.2f}</span></div>", 
                         unsafe_allow_html=True
                     )
 
@@ -148,18 +141,15 @@ else:
             time.sleep(0.3)
 
         if st.session_state.running:
-            # Ao final do ciclo, garante uma última atualização do saldo
-            placeholder_saldo.metric("Carteira Real-Time", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
-            
-            liq_total_ciclo = sum(t['liq'] for t in trades)
-            pnl_avg = (liq_total_ciclo / (st.session_state.invest_usd * 10)) * 100
+            liq_total = sum(t['liq'] for t in trades)
+            pnl_avg = (liq_total / (st.session_state.invest_usd * 10)) * 100
             
             st.session_state.resultados_ciclos.insert(0, {
                 "CICLO": f"#{st.session_state.ciclo_atual}",
                 "TOKEN": st.session_state.token_nome,
-                "RESULTADO": "WIN" if liq_total_ciclo > 0 else "LOSS",
+                "RESULTADO": "WIN" if liq_total > 0 else "LOSS",
                 "PNL CICLO": f"{pnl_avg:+.2f}%",
-                "LÍQUIDO": formatar_moeda(liq_total_ciclo, moeda_ref)
+                "LÍQUIDO": formatar_moeda(liq_total, moeda_ref)
             })
             
             st.session_state.ciclo_atual += 1
