@@ -22,9 +22,8 @@ TAXA_EXECUCAO_SIMULADA = 0.01
 def formatar_moeda(valor, moeda_ref):
     taxa = 5.05 if moeda_ref == "BRL" else 1.0
     v = valor * taxa
-    if moeda_ref == "BRL":
-        return f"R$ {v:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
-    return f"$ {v:,.2f}"
+    simbolo = "R$" if moeda_ref == "BRL" else "$"
+    return f"{simbolo} {v:,.2f}"
 
 def obter_preco_atual(address):
     try:
@@ -34,125 +33,106 @@ def obter_preco_atual(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE
+# 🖥️ INTERFACE MINIMALISTA
 # ==========================================================
-st.set_page_config(page_title="Sniper Parallel v8.5", layout="wide")
+st.set_page_config(page_title="Sniper Pro Minimal", layout="wide")
 
 with st.sidebar:
-    st.header("⚙️ Painel Multi-Trade")
+    st.header("⚙️ Config")
     st.session_state.saldo_demo = st.number_input("Banca (USD):", value=float(st.session_state.saldo_demo))
     moeda_ref = st.radio("Moeda:", ["USD", "BRL"])
+    taxa_exibicao = 5.05 if moeda_ref == "BRL" else 1.0
     st.divider()
-    alvo_gain = st.slider("Alvo Gain (%)", 0.5, 20.0, 2.0)
-    stop_loss = st.slider("Stop Loss (%)", 0.5, 15.0, 3.0)
-    st.divider()
-    if st.button("Resetar Tudo"):
+    alvo_gain = st.slider("Gain %", 0.5, 20.0, 2.0)
+    stop_loss = st.slider("Loss %", 0.5, 15.0, 3.0)
+    if st.button("Reset Total"):
         st.session_state.resultados_trades = []
         st.session_state.ciclo_atual = 1
         st.rerun()
 
 if not st.session_state.running:
-    st.title("🚀 Sniper Parallel - 10 Simultâneos")
-    st.metric("Banca Total", formatar_moeda(st.session_state.saldo_demo, moeda_ref))
+    st.title("🛡️ Sniper Minimal v9")
+    st.metric("Banca", formatar_moeda(st.session_state.saldo_demo, moeda_ref))
     
-    ca = st.text_input("CA do Token:")
-    invest_total = st.number_input("Investimento por Slot (USD):", value=10.0)
+    ca = st.text_input("Token CA:")
+    invest_total = st.number_input("Investimento p/ Trade (USD):", value=10.0)
     
-    if st.button("🔥 INICIAR 100 CICLOS X 10 TRADES", use_container_width=True, type="primary"):
+    if st.button("🚀 INICIAR OPERAÇÃO PARALELA", use_container_width=True, type="primary"):
         if ca:
             st.session_state.ca_ativo = ca
             st.session_state.invest_slot = invest_total
             st.session_state.running = True
             st.rerun()
 else:
-    # --- TELA DE EXECUÇÃO PARALELA ---
-    st.header(f"🛰️ Ciclo: {st.session_state.ciclo_atual} / 100")
-    if st.button("🛑 PARAR AGORA", use_container_width=True):
+    # --- CABEÇALHO LÍPIDO ---
+    c_head1, c_head2 = st.columns([3, 1])
+    c_head1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100")
+    if c_head2.button("🛑 PARAR"):
         st.session_state.running = False
         st.rerun()
 
-    # Criar o Grid Visual de 10 Slots (2 linhas de 5)
-    slots_visuais = []
-    col_group1 = st.columns(5)
-    col_group2 = st.columns(5)
-    for c in col_group1 + col_group2:
-        slots_visuais.append(c.empty())
+    # Grid de Trades (10 Slots Minimalistas)
+    slots_visuais = [st.empty() for _ in range(10)]
 
-    # Área Inferior: Tabela e Pizza
     st.divider()
-    c_tab, c_pie = st.columns([2, 1])
-    t_resumo = c_tab.empty()
-    p_pizza = c_pie.empty()
+    # Resumo
+    col_t, col_p = st.columns([2, 1])
+    t_resumo = col_t.empty()
+    p_pizza = col_p.empty()
 
-    # Iniciar os 10 trades do ciclo atual
     ca_ativo = st.session_state.ca_ativo
-    preco_base = obter_preco_atual(ca_ativo)
+    p_base = obter_preco_atual(ca_ativo)
     
-    if preco_base:
-        # Prepara os 10 trades
+    if p_base:
         trades = []
         for i in range(10):
-            trades.append({
-                "id": i + 1,
-                "entrada": preco_base,
-                "pnl": 0.0,
-                "ativo": True,
-                "resultado": ""
-            })
+            trades.append({"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": ""})
 
-        # Loop de Vida dos 10 Trades Simultâneos
         while st.session_state.running and any(t['ativo'] for t in trades):
-            preco_agora = obter_preco_atual(ca_ativo)
-            if not preco_agora: continue
+            p_agora = obter_preco_atual(ca_ativo)
+            if not p_agora: continue
 
             for i, t in enumerate(trades):
                 if t['ativo']:
-                    t['pnl'] = ((preco_agora / t['entrada']) - 1) * 100
+                    t['pnl'] = ((p_agora / t['entrada']) - 1) * 100
+                    valor_pnl_finan = (st.session_state.invest_slot * (t['pnl']/100)) * taxa_exibicao
                     
-                    # Checar Saída
                     if t['pnl'] >= alvo_gain or t['pnl'] <= -stop_loss:
                         t['ativo'] = False
-                        t['resultado'] = "WIN" if t['pnl'] > 0 else "LOSS"
-                        # Contabiliza na banca
+                        t['res'] = "WIN" if t['pnl'] > 0 else "LOSS"
                         lucro_liq = (st.session_state.invest_slot * (t['pnl']/100)) - (st.session_state.invest_slot * TAXA_EXECUCAO_SIMULADA)
                         st.session_state.saldo_demo += lucro_liq
                         st.session_state.resultados_trades.insert(0, {
                             "HORA": datetime.now().strftime("%H:%M:%S"),
                             "CICLO": st.session_state.ciclo_atual,
-                            "SLOT": t['id'],
-                            "RESULT": t['resultado'],
+                            "RESULT": t['res'],
                             "PNL %": f"{t['pnl']:.2f}%"
                         })
 
-                # Atualiza Visual do Slot em Tempo Real
-                cor = "#00ff00" if t['pnl'] > 0 else "#ff0000"
-                status_txt = "⏳" if t['ativo'] else ("✅" if t['resultado'] == "WIN" else "❌")
-                with slots_visuais[i].container():
-                    st.markdown(f"""
-                    <div style="border:1px solid #333; padding:10px; border-radius:5px; text-align:center;">
-                        <small>SLOT {t['id']}</small>
-                        <h2 style="color:{cor}; margin:0;">{t['pnl']:+.2f}%</h2>
-                        <small>{status_txt}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # VISUAL MINIMALISTA: [Valor] | [PNL%] | [Dinheiro]
+                    cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
+                    simbolo_m = "R$" if moeda_ref == "BRL" else "$"
+                    txt_pnl = f"{t['pnl']:+.2f}%"
+                    txt_fin = f"{simbolo_m} {valor_pnl_finan:+.2f}"
+                    status_icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
+                    
+                    slots_visuais[i].markdown(
+                        f"**{status_icon} {simbolo_m} {st.session_state.invest_slot * taxa_exibicao:.1f}** &nbsp;&nbsp; "
+                        f"<span style='color:{cor}; font-weight:bold;'>{txt_pnl}</span> &nbsp;&nbsp; "
+                        f"<span style='color:{cor};'>{txt_fin}</span>", 
+                        unsafe_allow_html=True
+                    )
 
-            # Atualiza Tabela e Pizza Geral
             if st.session_state.resultados_trades:
                 df = pd.DataFrame(st.session_state.resultados_trades)
                 t_resumo.table(df.head(10))
                 counts = df['RESULT'].value_counts()
-                fig_p = go.Figure(data=[go.Pie(labels=counts.index, values=counts.values, hole=.4, marker_colors=['#00ff00', '#ff0000'])])
-                fig_p.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
-                p_pizza.plotly_chart(fig_p, use_container_width=True, key=f"p_{time.time()}")
+                fig_p = go.Figure(data=[go.Pie(labels=counts.index, values=counts.values, hole=.5, marker_colors=['#00FF00', '#FF4B4B'])])
+                fig_p.update_layout(template="plotly_dark", height=180, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
+                p_pizza.plotly_chart(fig_p, use_container_width=True, key=f"v9_{time.time()}")
             
-            time.sleep(0.5)
+            time.sleep(0.4)
 
-        # Se todos os 10 ativos terminaram, pula para o próximo ciclo
         if st.session_state.running:
             st.session_state.ciclo_atual += 1
-            if st.session_state.ciclo_atual <= 100:
-                st.rerun()
-            else:
-                st.success("PARABÉNS! 100 Ciclos Completados.")
-                st.session_state.running = False
-                st.rerun()
+            st.rerun()
