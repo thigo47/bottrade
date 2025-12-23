@@ -38,9 +38,9 @@ def obter_dados_token(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v10.0
+# 🖥️ INTERFACE v10.1 - FIXING REAL-TIME BALANCE
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v10", layout="wide")
+st.set_page_config(page_title="Sniper Pro v10.1", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configuração")
@@ -65,8 +65,8 @@ with st.sidebar:
 taxa_view = TAXA_BRL if moeda_ref == "BRL" else 1.0
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Pro v10")
-    st.metric("Banca Disponível", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
+    st.title("🛡️ Sniper Pro v10.1")
+    st.metric("Banca em Espera", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
     
     ca = st.text_input("Token CA (Memecoin):")
     invest_input = st.number_input(f"Investimento por Ordem ({moeda_ref}):", value=10.0 * taxa_view)
@@ -76,9 +76,9 @@ if not st.session_state.running:
     if st.button("🚀 INICIAR 100 CICLOS", use_container_width=True, type="primary"):
         dados = obter_dados_token(ca)
         if not ca:
-            st.error("Insira o CA do token.")
+            st.error("Insira o CA.")
         elif not dados:
-            st.error("Token não encontrado.")
+            st.error("Token inválido.")
         elif invest_total_necessario_usd > st.session_state.saldo_usd:
             st.error(f"Saldo insuficiente.")
         else:
@@ -88,20 +88,15 @@ if not st.session_state.running:
             st.session_state.running = True
             st.rerun()
 else:
-    # --- PAINEL DE EXECUÇÃO ATUALIZADO ---
-    c1, c2, c3 = st.columns([2, 1.5, 1.5])
+    # --- CABEÇALHO COM SALDO REAL-TIME FORÇADO ---
+    header_col1, header_col2, header_col3 = st.columns([2, 1, 1.5])
     
-    c1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
+    header_col1.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
     
-    # Win Rate no meio
-    if st.session_state.resultados_ciclos:
-        wins = sum(1 for x in st.session_state.resultados_ciclos if x['RESULTADO'] == "WIN")
-        rate = (wins / len(st.session_state.resultados_ciclos)) * 100
-        c2.metric("Win Rate", f"{rate:.1f}%")
-    
-    # SALDO EM TEMPO REAL NO CANTO DIREITO
-    metric_saldo = c3.empty()
-    if c3.button("🛑 PARAR", use_container_width=True):
+    # Placeholder fixo para o saldo
+    placeholder_saldo = header_col3.empty()
+    # Botão de parar abaixo do saldo ou ao lado
+    if header_col2.button("🛑 PARAR"):
         st.session_state.running = False
         st.rerun()
 
@@ -115,13 +110,14 @@ else:
         p_base = dados_token['preco']
         trades = [{"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": "", "liq": 0.0} for i in range(10)]
 
+        # Loop principal do Ciclo
         while st.session_state.running and any(t['ativo'] for t in trades):
+            # 1. ATUALIZAÇÃO DO SALDO NO TOPO (Imediata)
+            placeholder_saldo.metric("Carteira Real-Time", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
+            
             dados_loop = obter_dados_token(st.session_state.ca_ativo)
             if not dados_loop: continue
             p_agora = dados_loop['preco']
-
-            # Atualiza o Saldo na métrica superior em cada iteração
-            metric_saldo.metric("Carteira Atual", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
 
             for i, t in enumerate(trades):
                 if t['ativo']:
@@ -134,6 +130,7 @@ else:
                         t['liq'] = (st.session_state.invest_usd * (t['pnl']/100)) - (st.session_state.invest_usd * TAXA_EXECUCAO_SIMULADA)
                         st.session_state.saldo_usd += t['liq']
 
+                    # Visual minimalista dos trades
                     cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
                     simbolo = "R$" if moeda_ref == "BRL" else "$"
                     icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
@@ -151,6 +148,9 @@ else:
             time.sleep(0.3)
 
         if st.session_state.running:
+            # Ao final do ciclo, garante uma última atualização do saldo
+            placeholder_saldo.metric("Carteira Real-Time", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
+            
             liq_total_ciclo = sum(t['liq'] for t in trades)
             pnl_avg = (liq_total_ciclo / (st.session_state.invest_usd * 10)) * 100
             
