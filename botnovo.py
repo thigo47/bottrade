@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ==========================================================
 # 🔑 ESTADO DA SESSÃO
-# ==========================================
+# ==========================================================
 if "resultados_ciclos" not in st.session_state:
     st.session_state.resultados_ciclos = []
 if "running" not in st.session_state:
@@ -38,9 +38,9 @@ def obter_dados_token(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v9.8 - FOCO NA MEMECOIN
+# 🖥️ INTERFACE v10.0
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v9.8", layout="wide")
+st.set_page_config(page_title="Sniper Pro v10", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configuração")
@@ -65,7 +65,7 @@ with st.sidebar:
 taxa_view = TAXA_BRL if moeda_ref == "BRL" else 1.0
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Pro")
+    st.title("🛡️ Sniper Pro v10")
     st.metric("Banca Disponível", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
     
     ca = st.text_input("Token CA (Memecoin):")
@@ -78,9 +78,9 @@ if not st.session_state.running:
         if not ca:
             st.error("Insira o CA do token.")
         elif not dados:
-            st.error("Não foi possível encontrar essa Memecoin. Verifique o C.A.")
+            st.error("Token não encontrado.")
         elif invest_total_necessario_usd > st.session_state.saldo_usd:
-            st.error(f"Saldo Insuficiente! Requer {formatar_moeda(invest_total_necessario_usd, moeda_ref)}.")
+            st.error(f"Saldo insuficiente.")
         else:
             st.session_state.token_nome = dados['nome']
             st.session_state.ca_ativo = ca
@@ -88,18 +88,20 @@ if not st.session_state.running:
             st.session_state.running = True
             st.rerun()
 else:
-    # --- PAINEL DE EXECUÇÃO ---
-    c1, c2, c3 = st.columns([2.5, 1.5, 1])
+    # --- PAINEL DE EXECUÇÃO ATUALIZADO ---
+    c1, c2, c3 = st.columns([2, 1.5, 1.5])
     
-    # AGORA MOSTRA O NOME DA MEMECOIN
-    c1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100 | Operando ({st.session_state.token_nome})")
+    c1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
     
+    # Win Rate no meio
     if st.session_state.resultados_ciclos:
         wins = sum(1 for x in st.session_state.resultados_ciclos if x['RESULTADO'] == "WIN")
         rate = (wins / len(st.session_state.resultados_ciclos)) * 100
         c2.metric("Win Rate", f"{rate:.1f}%")
     
-    if c3.button("🛑 PARAR"):
+    # SALDO EM TEMPO REAL NO CANTO DIREITO
+    metric_saldo = c3.empty()
+    if c3.button("🛑 PARAR", use_container_width=True):
         st.session_state.running = False
         st.rerun()
 
@@ -107,7 +109,6 @@ else:
     st.divider()
     t_resumo = st.empty()
 
-    # Busca preço inicial para o ciclo
     dados_token = obter_dados_token(st.session_state.ca_ativo)
     
     if dados_token:
@@ -118,6 +119,9 @@ else:
             dados_loop = obter_dados_token(st.session_state.ca_ativo)
             if not dados_loop: continue
             p_agora = dados_loop['preco']
+
+            # Atualiza o Saldo na métrica superior em cada iteração
+            metric_saldo.metric("Carteira Atual", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
 
             for i, t in enumerate(trades):
                 if t['ativo']:
@@ -144,7 +148,7 @@ else:
             if st.session_state.resultados_ciclos:
                 t_resumo.table(pd.DataFrame(st.session_state.resultados_ciclos).head(15))
             
-            time.sleep(0.4)
+            time.sleep(0.3)
 
         if st.session_state.running:
             liq_total_ciclo = sum(t['liq'] for t in trades)
