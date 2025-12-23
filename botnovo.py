@@ -15,8 +15,8 @@ if "saldo_usd" not in st.session_state:
     st.session_state.saldo_usd = 1000.0
 if "ciclo_atual" not in st.session_state:
     st.session_state.ciclo_atual = 1
-if "pair_address" not in st.session_state:
-    st.session_state.pair_address = ""
+if "ultimo_preco_track" not in st.session_state:
+    st.session_state.ultimo_preco_track = 0.0
 
 TAXA_BRL = 5.05
 TAXA_EXECUCAO_SIMULADA = 0.01 
@@ -27,12 +27,10 @@ def formatar_moeda(valor_usd, moeda_ref):
     return f"{simbolo} {valor:,.2f}"
 
 def buscar_info_inicial(ca):
-    """Busca o par de liquidez principal para consultas mais rápidas (Opção A)"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
         res = requests.get(url, timeout=5).json()
         if res.get('pairs'):
-            # Pega o par com maior liquidez (geralmente o primeiro)
             melhor_par = res['pairs'][0]
             return {
                 "nome": melhor_par['baseToken']['symbol'].upper(),
@@ -42,7 +40,6 @@ def buscar_info_inicial(ca):
     except: return None
 
 def obter_preco_veloz(pair_addr):
-    """Consulta direta ao par para menor latência"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{pair_addr}"
         res = requests.get(url, timeout=2).json()
@@ -50,17 +47,15 @@ def obter_preco_veloz(pair_addr):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v11.0
+# 🖥️ INTERFACE v11.1
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v11", layout="wide")
+st.set_page_config(page_title="Sniper Pro v11.1", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configuração")
     moeda_ref = st.radio("Moeda:", ["USD", "BRL"])
-    
     val_banca = st.number_input(f"Banca ({moeda_ref}):", 
                                 value=float(st.session_state.saldo_usd * (TAXA_BRL if moeda_ref == "BRL" else 1.0)))
-    
     if st.button("Atualizar Banca"):
         st.session_state.saldo_usd = val_banca / (TAXA_BRL if moeda_ref == "BRL" else 1.0)
         st.rerun()
@@ -68,7 +63,6 @@ with st.sidebar:
     st.divider()
     alvo_gain = st.slider("Alvo (%)", 0.5, 20.0, 2.0)
     stop_loss = st.slider("Stop (%)", 0.5, 15.0, 3.0)
-    
     if st.button("Resetar Histórico"):
         st.session_state.resultados_ciclos = []
         st.session_state.ciclo_atual = 1
@@ -77,7 +71,7 @@ with st.sidebar:
 taxa_view = TAXA_BRL if moeda_ref == "BRL" else 1.0
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Pro v11")
+    st.title("🛡️ Sniper Pro v11.1")
     st.write(f"**Saldo Atual:** {formatar_moeda(st.session_state.saldo_usd, moeda_ref)}")
     
     ca = st.text_input("Token CA:")
@@ -92,38 +86,54 @@ if not st.session_state.running:
             st.session_state.ca_ativo = ca
             st.session_state.invest_usd = invest_input / taxa_view
             st.session_state.running = True
+            st.session_state.ultimo_preco_track = info['preco']
             st.rerun()
         else:
-            st.error("Erro: Verifique o CA ou Saldo Insuficiente.")
+            st.error("Erro: Verifique o CA ou Saldo.")
 else:
     # --- CABEÇALHO ---
     placeholder_saldo = st.empty()
-    st.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
+    col_status, col_parar = st.columns([3, 1])
     
-    if st.button("🛑 PARAR"):
+    col_status.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
+    
+    if col_parar.button("🛑 PARAR", use_container_width=True):
         st.session_state.running = False
         st.rerun()
+    
+    # MONITOR DE PREÇO MINIMALISTA EMBAIXO DO BOTÃO
+    placeholder_preco = col_parar.empty()
 
     slots_visuais = [st.empty() for _ in range(10)]
     st.divider()
     t_resumo = st.empty()
 
-    # Preço inicial do par
     p_base = obter_preco_veloz(st.session_state.pair_address)
     
     if p_base:
         trades = [{"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": "", "liq": 0.0} for i in range(10)]
 
-        # LOOP DE ALTA VELOCIDADE
         while st.session_state.running and any(t['ativo'] for t in trades):
-            # Atualiza Saldo Instantâneo
+            # 1. Saldo
             txt_saldo = formatar_moeda(st.session_state.saldo_usd, moeda_ref)
             placeholder_saldo.markdown(f"**{txt_saldo}**")
             
-            # Consulta via Pair Address (Mais rápido que CA)
+            # 2. Preço e Seta (Monitoramento)
             p_agora = obter_preco_veloz(st.session_state.pair_address)
             if not p_agora: continue
 
+            seta = "▲" if p_agora >= st.session_state.ultimo_preco_track else "▼"
+            cor_seta = "#00FF00" if p_agora >= st.session_state.ultimo_preco_track else "#FF4B4B"
+            
+            placeholder_preco.markdown(
+                f"<div style='text-align: center; font-family: monospace; font-size: 18px;'>"
+                f"USD {p_agora:.8f} <span style='color:{cor_seta};'>{seta}</span>"
+                f"</div>", 
+                unsafe_allow_html=True
+            )
+            st.session_state.ultimo_preco_track = p_agora
+
+            # 3. Processamento dos Trades
             for i, t in enumerate(trades):
                 if t['ativo']:
                     t['pnl'] = ((p_agora / t['entrada']) - 1) * 100
@@ -140,7 +150,7 @@ else:
                     icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
                     
                     slots_visuais[i].markdown(
-                        f"<div style='font-family:monospace; font-size:14px; line-height:1.2;'>{icon} <b>{simbolo}{st.session_state.invest_usd * taxa_view:.2f}</b> &nbsp; "
+                        f"<div style='font-family:monospace; font-size:14px;'>{icon} <b>{simbolo}{st.session_state.invest_usd * taxa_view:.2f}</b> &nbsp; "
                         f"<span style='color:{cor}; font-weight:bold;'>{t['pnl']:+.2f}%</span> &nbsp; "
                         f"<span style='color:{cor};'>{simbolo}{v_finan:+.2f}</span></div>", 
                         unsafe_allow_html=True
@@ -149,12 +159,11 @@ else:
             if st.session_state.resultados_ciclos:
                 t_resumo.table(pd.DataFrame(st.session_state.resultados_ciclos).head(10))
             
-            time.sleep(0.2) # Delay reduzido para 200ms para resposta mais ágil
+            time.sleep(0.2)
 
         if st.session_state.running:
             liq_total = sum(t['liq'] for t in trades)
             pnl_avg = (liq_total / (st.session_state.invest_usd * 10)) * 100
-            
             st.session_state.resultados_ciclos.insert(0, {
                 "CICLO": f"#{st.session_state.ciclo_atual}",
                 "TOKEN": st.session_state.token_nome,
@@ -162,6 +171,5 @@ else:
                 "PNL %": f"{pnl_avg:+.2f}%",
                 "LÍQUIDO": formatar_moeda(liq_total, moeda_ref)
             })
-            
             st.session_state.ciclo_atual += 1
             st.rerun()
