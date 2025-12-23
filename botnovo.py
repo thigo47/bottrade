@@ -32,20 +32,20 @@ def obter_preco_atual(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v9.5
+# 🖥️ INTERFACE v9.6 - COM TRAVA DE SALDO
 # ==========================================================
-st.set_page_config(page_title="Sniper Ciclos v9.5", layout="wide")
+st.set_page_config(page_title="Sniper Safu v9.6", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configuração")
     moeda_ref = st.radio("Moeda de Operação:", ["USD", "BRL"])
     
-    # CORREÇÃO DO BUG: Input adaptável à moeda selecionada
-    label_banca = f"Banca Atual ({moeda_ref}):"
-    valor_input = st.number_input(label_banca, value=float(st.session_state.saldo_usd * (TAXA_BRL if moeda_ref == "BRL" else 1.0)))
+    # Input de banca corrigido
+    valor_input = st.number_input(f"Banca Atual ({moeda_ref}):", 
+                                  value=float(st.session_state.saldo_usd * (TAXA_BRL if moeda_ref == "BRL" else 1.0)))
     
     if st.button("Atualizar Banca"):
-        st.session_state.saldo_usd = valor_input / TAXA_BRL if moeda_ref == "BRL" else valor_input
+        st.session_state.saldo_usd = valor_input / (TAXA_BRL if moeda_ref == "BRL" else 1.0)
         st.rerun()
 
     st.divider()
@@ -60,14 +60,21 @@ with st.sidebar:
 taxa_view = TAXA_BRL if moeda_ref == "BRL" else 1.0
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Pro - Ciclos")
+    st.title("🛡️ Sniper Pro - Gestão de Risco")
     st.metric("Banca Disponível", formatar_moeda(st.session_state.saldo_usd, moeda_ref))
     
     ca = st.text_input("Token CA:")
     invest_input = st.number_input(f"Investimento por Ordem ({moeda_ref}):", value=10.0 * taxa_view)
     
+    # --- CHECK DE SALDO ANTES DE INICIAR ---
+    invest_total_necessario_usd = (invest_input / taxa_view) * 10
+    
     if st.button("🚀 INICIAR 100 CICLOS", use_container_width=True, type="primary"):
-        if ca:
+        if not ca:
+            st.error("Insira o CA do token.")
+        elif invest_total_necessario_usd > st.session_state.saldo_usd:
+            st.error(f"Saldo Insuficiente! Você precisa de {formatar_moeda(invest_total_necessario_usd, moeda_ref)} para abrir 10 ordens, mas tem apenas {formatar_moeda(st.session_state.saldo_usd, moeda_ref)}.")
+        else:
             st.session_state.ca_ativo = ca
             st.session_state.invest_usd = invest_input / taxa_view
             st.session_state.running = True
@@ -77,11 +84,10 @@ else:
     c1, c2, c3 = st.columns([2, 2, 1])
     c1.subheader(f"🛰️ Ciclo {st.session_state.ciclo_atual}/100")
     
-    # Cálculo de Win Rate para substituir a pizza
     if st.session_state.resultados_ciclos:
         wins = sum(1 for x in st.session_state.resultados_ciclos if x['RESULTADO'] == "WIN")
         rate = (wins / len(st.session_state.resultados_ciclos)) * 100
-        c2.metric("Assertividade (Win Rate)", f"{rate:.1f}%")
+        c2.metric("Win Rate", f"{rate:.1f}%")
     
     if c3.button("🛑 PARAR"):
         st.session_state.running = False
@@ -89,12 +95,12 @@ else:
 
     slots_visuais = [st.empty() for _ in range(10)]
     st.divider()
-    st.write("### 📜 Histórico de Ciclos")
     t_resumo = st.empty()
 
     p_base = obter_preco_atual(st.session_state.ca_ativo)
     
     if p_base:
+        # Reserva o saldo total do ciclo imediatamente
         trades = [{"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": "", "liq": 0.0} for i in range(10)]
 
         while st.session_state.running and any(t['ativo'] for t in trades):
@@ -109,10 +115,10 @@ else:
                     if t['pnl'] >= alvo_gain or t['pnl'] <= -stop_loss:
                         t['ativo'] = False
                         t['res'] = "WIN" if t['pnl'] > 0 else "LOSS"
+                        # Calcula lucro/prejuízo líquido
                         t['liq'] = (st.session_state.invest_usd * (t['pnl']/100)) - (st.session_state.invest_usd * TAXA_EXECUCAO_SIMULADA)
                         st.session_state.saldo_usd += t['liq']
 
-                    # Visual dos slots ativos
                     cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
                     simbolo = "R$" if moeda_ref == "BRL" else "$"
                     icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
@@ -124,22 +130,20 @@ else:
                         unsafe_allow_html=True
                     )
 
-            # Atualizar Tabela de Ciclos (Somente após fechar ciclos ou para mostrar os anteriores)
             if st.session_state.resultados_ciclos:
                 t_resumo.table(pd.DataFrame(st.session_state.resultados_ciclos).head(15))
             
             time.sleep(0.4)
 
-        # FIM DO CICLO: Agrupa os dados e salva
         if st.session_state.running:
-            pnl_total_ciclo = sum(t['pnl'] for t in trades) / 10
             liq_total_ciclo = sum(t['liq'] for t in trades)
+            pnl_avg = (liq_total_ciclo / (st.session_state.invest_usd * 10)) * 100
             
             st.session_state.resultados_ciclos.insert(0, {
                 "CICLO": f"#{st.session_state.ciclo_atual}",
                 "RESULTADO": "WIN" if liq_total_ciclo > 0 else "LOSS",
-                "PNL MÉDIO %": f"{pnl_total_ciclo:+.2f}%",
-                "TOTAL LÍQUIDO": formatar_moeda(liq_total_ciclo, moeda_ref)
+                "PNL CICLO": f"{pnl_avg:+.2f}%",
+                "LÍQUIDO": formatar_moeda(liq_total_ciclo, moeda_ref)
             })
             
             st.session_state.ciclo_atual += 1
