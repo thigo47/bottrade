@@ -38,50 +38,50 @@ def obter_dados_moeda(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE MOBILE RESPONSIVA
+# 🖥️ INTERFACE
 # ==========================================================
-st.set_page_config(page_title="Sniper Bot Pro", layout="wide")
+st.set_page_config(page_title="Sniper Pro", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configurações")
     
-    # EDITAR VALOR DA CARTEIRA
-    novo_saldo = st.number_input("Editar Saldo da Carteira:", value=float(st.session_state.saldo_demo))
+    # EDITAR SALDO
+    novo_saldo = st.number_input("Editar Saldo Carteira:", value=float(st.session_state.saldo_demo))
     if st.button("Atualizar Saldo"):
         st.session_state.saldo_demo = novo_saldo
-        st.success("Saldo atualizado!")
+        st.rerun()
         
     st.divider()
     moeda_ref = st.radio("Exibir valores em:", ["USD", "BRL"])
     taxa = 5.05 if moeda_ref == "BRL" else 1.0
     
-    if st.button("Zerar Histórico de Trades"):
+    if st.button("Limpar Tudo"):
         st.session_state.resultados_trades = []
+        st.session_state.running = False
         st.rerun()
 
 if not st.session_state.running:
     st.title("🤖 Sniper Dashboard")
-    st.metric("Banca Virtual Atual", formatar_moeda(st.session_state.saldo_demo * taxa, moeda_ref))
+    st.metric("Banca Disponível", formatar_moeda(st.session_state.saldo_demo * taxa, moeda_ref))
     
     ca = st.text_input("Cole o CA do Token:")
     val_in = st.number_input(f"Valor por Trade ({moeda_ref}):", value=10.0)
     
     if st.button("🚀 INICIAR OPERAÇÕES", use_container_width=True, type="primary"):
         if ca:
-            dados_validacao = obter_dados_moeda(ca)
-            if dados_validacao:
-                st.session_state.token_nome = dados_validacao['nome']
+            dados = obter_dados_moeda(ca)
+            if dados:
+                st.session_state.token_nome = dados['nome']
                 st.session_state.investimento_usd = val_in / taxa
                 st.session_state.ca_ativo = ca
                 st.session_state.running = True
                 st.rerun()
-            else:
-                st.error("CA Inválido ou Token não encontrado!")
+
 else:
     # --- TELA DE EXECUÇÃO ---
-    st.header(f"⚡ Operando em {st.session_state.token_nome}")
+    st.header(f"⚡ Operando {st.session_state.token_nome}")
     
-    if st.button("🛑 INTERROMPER BOT", use_container_width=True):
+    if st.button("🛑 PARAR BOT", use_container_width=True):
         st.session_state.running = False
         st.rerun()
 
@@ -93,11 +93,11 @@ else:
 
     grafico_place = st.empty()
     
-    # ÁREA DE RESUMO E PIZZA
     st.divider()
+    # Containers para evitar erro de ID duplicado
     col_tab, col_pie = st.columns([2, 1])
     tabela_resumo = col_tab.empty()
-    grafico_pizza_place = col_pie.empty()
+    pizza_resumo = col_pie.empty()
 
     invest_usd = st.session_state.investimento_usd
     ca_ativo = st.session_state.ca_ativo
@@ -105,9 +105,9 @@ else:
     for t_num in range(len(st.session_state.resultados_trades) + 1, 11):
         if not st.session_state.running: break
         
-        dados = obter_dados_moeda(ca_ativo)
-        if not dados: continue
-        p_entrada = dados['preco']
+        d_init = obter_dados_moeda(ca_ativo)
+        if not d_init: continue
+        p_entrada = d_init['preco']
         precos_hist = [p_entrada]
         
         while st.session_state.running:
@@ -116,42 +116,42 @@ else:
                 p_atual = atual['preco']
                 precos_hist.append(p_atual)
                 pnl = ((p_atual / p_entrada) - 1) * 100
-                lucro_atual_usd = invest_usd * (pnl / 100)
+                lucro_usd = invest_usd * (pnl / 100)
                 
-                # Update UI
+                # Update Dashboard
                 pnl_display.metric(f"Trade #{t_num}", f"{pnl:+.2f}%")
-                lucro_display.metric("Resultado", formatar_moeda(lucro_atual_usd * taxa, moeda_ref))
-                price_display.metric("Preço Atual", f"${p_atual:.8f}")
-                banca_display.metric("Banca Total", formatar_moeda(st.session_state.saldo_demo * taxa, moeda_ref))
+                lucro_display.metric("Resultado", formatar_moeda(lucro_usd * taxa, moeda_ref))
+                price_display.metric("Preço", f"${p_atual:.8f}")
+                banca_display.metric("Banca", formatar_moeda(st.session_state.saldo_demo * taxa, moeda_ref))
 
                 with grafico_place.container():
                     fig = go.Figure(data=[go.Scatter(y=precos_hist[-40:], mode='lines', line=dict(color='#00ff00' if pnl > 0 else '#ff0000', width=3))])
                     fig.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(visible=False))
-                    st.plotly_chart(fig, use_container_width=True, key=f"trade_{t_num}_{time.time()}", config={'displayModeBar': False})
+                    # KEY ÚNICA PARA O GRÁFICO DE LINHA
+                    st.plotly_chart(fig, use_container_width=True, key=f"line_{t_num}_{time.time()}", config={'displayModeBar': False})
 
-                # Histórico e Pizza em tempo real
+                # Tabela e Pizza
                 if st.session_state.resultados_trades:
                     df_res = pd.DataFrame(st.session_state.resultados_trades)
                     tabela_resumo.table(df_res)
                     
-                    # Gráfico de Pizza
+                    # CORREÇÃO DO ERRO: Adicionando Key única ao gráfico de pizza
                     counts = df_res['STATUS'].value_counts()
                     fig_p = go.Figure(data=[go.Pie(labels=counts.index, values=counts.values, hole=.3, marker_colors=['#00ff00', '#ff0000'])])
                     fig_p.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
-                    grafico_pizza_place.plotly_chart(fig_p, use_container_width=True)
+                    pizza_resumo.plotly_chart(fig_p, use_container_width=True, key=f"pizza_{t_num}_{time.time()}")
 
-                if pnl >= 2.5 or pnl <= -3.0:
-                    st.session_state.saldo_demo += lucro_atual_usd
-                    status = "WIN" if pnl > 0 else "LOSS"
-                    
+                # Saída (2% Win ou 3% Loss)
+                if pnl >= 2.0 or pnl <= -3.0:
+                    st.session_state.saldo_demo += lucro_usd
                     st.session_state.resultados_trades.insert(0, {
                         "TRADE": f"#{t_num}",
-                        "STATUS": status,
-                        "VALOR": formatar_moeda(lucro_atual_usd * taxa, moeda_ref),
+                        "STATUS": "WIN" if pnl > 0 else "LOSS",
+                        "VALOR": formatar_moeda(lucro_usd * taxa, moeda_ref),
                         "PNL %": f"{pnl:+.2f}%"
                     })
                     break
-            time.sleep(0.6)
+            time.sleep(0.7)
     
     st.session_state.running = False
     st.rerun()
