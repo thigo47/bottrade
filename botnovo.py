@@ -35,15 +35,15 @@ def obter_dados_token(address):
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v10.2
+# 🖥️ INTERFACE v10.3 - ULTRA MINIMALISTA
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v10.2", layout="wide")
+st.set_page_config(page_title="Sniper Pro v10.3", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Configuração")
-    moeda_ref = st.radio("Moeda de Operação:", ["USD", "BRL"])
+    moeda_ref = st.radio("Moeda:", ["USD", "BRL"])
     
-    val_banca = st.number_input(f"Banca Atual ({moeda_ref}):", 
+    val_banca = st.number_input(f"Banca ({moeda_ref}):", 
                                 value=float(st.session_state.saldo_usd * (TAXA_BRL if moeda_ref == "BRL" else 1.0)))
     
     if st.button("Atualizar Banca"):
@@ -62,35 +62,29 @@ with st.sidebar:
 taxa_view = TAXA_BRL if moeda_ref == "BRL" else 1.0
 
 if not st.session_state.running:
-    st.title("🛡️ Sniper Pro v10.2")
-    st.markdown(f"### 👛 Saldo: {formatar_moeda(st.session_state.saldo_usd, moeda_ref)}")
+    st.title("🛡️ Sniper Pro")
+    st.write(f"**Saldo Atual:** {formatar_moeda(st.session_state.saldo_usd, moeda_ref)}")
     
-    ca = st.text_input("Token CA (Memecoin):")
+    ca = st.text_input("Token CA:")
     invest_input = st.number_input(f"Investimento p/ Ordem ({moeda_ref}):", value=10.0 * taxa_view)
     
-    invest_total_usd = (invest_input / taxa_view) * 10
-    
-    if st.button("🚀 INICIAR 100 CICLOS", use_container_width=True, type="primary"):
+    if st.button("🚀 INICIAR OPERAÇÃO", use_container_width=True, type="primary"):
         dados = obter_dados_token(ca)
-        if not ca: st.error("Insira o CA.")
-        elif not dados: st.error("Token inválido.")
-        elif invest_total_usd > st.session_state.saldo_usd: st.error("Saldo insuficiente.")
-        else:
+        invest_total_usd = (invest_input / taxa_view) * 10
+        if ca and dados and invest_total_usd <= st.session_state.saldo_usd:
             st.session_state.token_nome = dados['nome']
             st.session_state.ca_ativo = ca
             st.session_state.invest_usd = invest_input / taxa_view
             st.session_state.running = True
             st.rerun()
+        else:
+            st.error("Verifique o CA ou Saldo.")
 else:
     # --- CABEÇALHO LÍPIDO ---
-    h_col1, h_col2 = st.columns([3, 1])
+    placeholder_saldo = st.empty()
+    st.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
     
-    h_col1.subheader(f"🛰️ {st.session_state.ciclo_atual}/100 | {st.session_state.token_nome}")
-    
-    # SALDO MINIMALISTA COM EMOJI
-    placeholder_saldo = h_col2.empty()
-    
-    if st.button("🛑 PARAR OPERAÇÃO", use_container_width=True):
+    if st.button("🛑 PARAR"):
         st.session_state.running = False
         st.rerun()
 
@@ -105,9 +99,9 @@ else:
         trades = [{"id": i+1, "entrada": p_base, "pnl": 0.0, "ativo": True, "res": "", "liq": 0.0} for i in range(10)]
 
         while st.session_state.running and any(t['ativo'] for t in trades):
-            # Atualização do Saldo Minimalista
+            # SALDO APENAS COM SIFRÃO, ALINHADO À ESQUERDA
             txt_saldo = formatar_moeda(st.session_state.saldo_usd, moeda_ref)
-            placeholder_saldo.markdown(f"<h3 style='text-align:right; margin:0;'>👛 {txt_saldo}</h3>", unsafe_allow_html=True)
+            placeholder_saldo.markdown(f"**{txt_saldo}**")
             
             dados_loop = obter_dados_token(st.session_state.ca_ativo)
             if not dados_loop: continue
@@ -129,8 +123,8 @@ else:
                     icon = "🔵" if t['ativo'] else ("✅" if t['res'] == "WIN" else "❌")
                     
                     slots_visuais[i].markdown(
-                        f"<div style='font-family:monospace; font-size:15px;'>{icon} <b>{simbolo} {st.session_state.invest_usd * taxa_view:.2f}</b> &nbsp;&nbsp; "
-                        f"<span style='color:{cor};'>{t['pnl']:+.2f}%</span> &nbsp;&nbsp; "
+                        f"<div style='font-family:monospace;'>{icon} <b>{simbolo} {st.session_state.invest_usd * taxa_view:.2f}</b> &nbsp;&nbsp; "
+                        f"<span style='color:{cor}; font-weight:bold;'>{t['pnl']:+.2f}%</span> &nbsp;&nbsp; "
                         f"<span style='color:{cor};'>{simbolo} {v_finan:+.2f}</span></div>", 
                         unsafe_allow_html=True
                     )
