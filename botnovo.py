@@ -5,10 +5,7 @@ import pandas as pd
 from datetime import datetime
 import threading
 import os
-import asyncio
-import websockets
-import base64
-import json
+import functools
 
 # ==========================================================
 # 💾 INICIALIZAÇÃO SEGURA DO ESTADO (NÃO QUEBRA NO REBOOT)
@@ -19,25 +16,31 @@ if "historico" not in st.session_state: st.session_state.historico = []
 if "ciclo" not in st.session_state: st.session_state.ciclo = 1
 if "auth" not in st.session_state: st.session_state.auth = False
 if "p_atual" not in st.session_state: st.session_state.p_atual = None
-if "pair_address" not in st.session_state: st.session_state.pair_address = None
 
 # ==========================================================
 # ⚙️ FUNÇÕES DE MOTOR (SIMPLIFICADAS PARA NÃO TRAVAR)
 # ==========================================================
-def fetch_price(ca):
-    """Fallback HTTP fetch - usado como backup se WebSocket falhar."""
+@functools.lru_cache(maxsize=128)
+def fetch_price(ca, _cache_buster=None):
+    """Tenta buscar o preço de forma robusta com cache-buster para refresh."""
     try:
+        # Jupiter API
         url = f"https://api.jup.ag/price/v2?ids={ca}"
         response = requests.get(url, timeout=5)
         data = response.json()
-        return float(data.get('data', {}).get(ca, {}).get('price', None))
-    except:
-        try:
-            url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-            res = requests.get(url, timeout=5).json()
-            return float(res.get('pairs', [{}])[0].get('priceUsd', None))
-        except:
-            return None
+        price = float(data.get('data', {}).get(ca, {}).get('price', None))
+        if price:
+            return price
+    except Exception as e:
+        print(f"Jupiter error: {e}")
+    try:
+        # Backup DexScreener
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
+        res = requests.get(url, timeout=5).json()
+        return float(res.get('pairs', [{}])[0].get('priceUsd', None))
+    except Exception as e:
+        print(f"DexScreener error: {e}")
+        return None
 
 def get_token_info(ca):
     try:
@@ -46,14 +49,6 @@ def get_token_info(ca):
         return res.get('pairs', [{}])[0].get('baseToken', {}).get('symbol', 'TOKEN')
     except:
         return "TOKEN"
-
-def get_pair_address(ca):
-    try:
-        url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-        res = requests.get(url, timeout=5).json()
-        return res.get('pairs', [{}])[0].get('pairAddress', None)
-    except:
-        return None
 
 # ==========================================================
 # 🧠 CÉREBRO IA v29 (AUTÔNOMO)
@@ -89,62 +84,21 @@ def get_exchange_rate(base='USD', target='BRL'):
         return 5.05  # Fallback em caso de erro
 
 # ==========================================================
-# 🔄 LOOP DE MONITORAMENTO EM THREAD COM WEBSOCKET PARA BAIXA LATÊNCIA
+# 🔄 LOOP DE MONITORAMENTO EM THREAD COM POLLING PARA ESTABILIDADE
 # ==========================================================
-def generate_sec_websocket_key():
-    random_bytes = os.urandom(16)
-    key = base64.b64encode(random_bytes).decode('utf-8')
-    return key
-
-async def ws_monitoring():
-    headers = {
-        "Host": "io.dexscreener.com",
-        "Connection": "Upgrade",
-        "Pragma": "no-cache",
-        "Cache-Control": "no-cache",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Upgrade": "websocket",
-        "Origin": "https://dexscreener.com",
-        "Sec-WebSocket-Version": 13,
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Sec-WebSocket-Key": generate_sec_websocket_key()
-    }
-    pair_address = st.session_state.pair_address
-    if not pair_address:
-        return
-
-    uri = f"wss://io.dexscreener.com/dex/screener/pairs/h24/1?pairAddress={pair_address}"
-    
-    async with websockets.connect(uri, extra_headers=headers) as websocket:
-        while st.session_state.running:
-            try:
-                message_raw = await websocket.recv()
-                message = json.loads(message_raw)
-                if "pairs" in message and message["pairs"]:
-                    pair = message["pairs"][0]
-                    st.session_state.p_atual = float(pair.get("priceUsd", st.session_state.p_atual))
-            except Exception as e:
-                print(f"WebSocket error: {e}")
-                break
-
 def monitoring_loop():
-    # Inicializa preço com fallback
-    st.session_state.p_atual = fetch_price(st.session_state.ca)
-
-    # Roda o async WS em loop
-    try:
-        asyncio.run(ws_monitoring())
-    except Exception as e:
-        print(f"Async error: {e}")
-
-    # Fallback polling se WS falhar
     while st.session_state.running:
-        p_atual = fetch_price(st.session_state.ca)
+        # Fetch preço com cache-buster
+        cache_buster = time.time()
+        p_atual = fetch_price(st.session_state.ca, cache_buster)
         if p_atual:
             st.session_state.p_atual = p_atual
-        time.sleep(1)  # Polling lento como backup
+            print(f"Preço atualizado: {p_atual}")  # Log para debug
+        else:
+            print("Falha ao fetch preço")  # Log erro
+        time.sleep(0.5)  # Polling a cada 0.5s para capturar variações (ajuste se necessário)
 
+    # Após parar, incrementa ciclo
     st.session_state.ciclo += 1
 
 def update_ui_from_price():
@@ -155,18 +109,22 @@ def update_ui_from_price():
 
         for i, t in enumerate(st.session_state.trades):
             if t['on']:
+                # Cálculo de PNL
                 t['pnl'] = ((p_atual / t['ent']) - 1) * 100
                 if t['pnl'] > t['max']: t['max'] = t['pnl']
                 t['h'].append(p_atual)
                 if len(t['h']) > 5: t['h'].pop(0)
 
+                # DECISÃO DA IA
                 fechar, motivo = ia_brain(t['pnl'], t['max'], t['h'])
 
                 if fechar:
                     t['on'] = False
                     t['res'] = motivo
+                    # Atualiza o saldo real
                     lucro_usd = (st.session_state.invest_usd * (t['pnl']/100))
                     st.session_state.saldo += lucro_usd
+                    # Log no histórico
                     st.session_state.historico.append({
                         'ciclo': st.session_state.ciclo,
                         'ordem': i+1,
@@ -174,6 +132,7 @@ def update_ui_from_price():
                         'motivo': motivo
                     })
 
+                # Atualiza texto da ordem
                 cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
                 status_txt = "🔵" if t['on'] else "🤖"
                 st.session_state.order_texts[i] = f"{status_txt} Ordem {i+1}: <b style='color:{cor}'>{t['pnl']:+.2f}%</b> | {t['res']}"
@@ -183,8 +142,8 @@ def update_ui_from_price():
 # ==========================================================
 st.set_page_config(page_title="Sniper Pro v29", layout="wide")
 
-# Senha de ambiente
-SENHA = os.getenv('SNIPER_SENHA', '1234')
+# Senha de ambiente (para GitHub, use st.secrets ou os.getenv)
+SENHA = os.getenv('SNIPER_SENHA', '1234')  # Defina no .env ou GitHub Secrets
 
 if not st.session_state.auth:
     st.title("🛡️ Acesso Sniper v29")
@@ -194,7 +153,7 @@ if not st.session_state.auth:
             st.session_state.auth = True
             st.rerun()
 else:
-    # --- BARRA LATERAL ---
+    # --- BARRA LATERAL (CONTROLE DE BANCA) ---
     with st.sidebar:
         st.header("💰 Gestão Financeira")
         st.session_state.moeda = st.radio("Exibição:", ["USD", "BRL"])
@@ -213,12 +172,11 @@ else:
             st.rerun()
 
         st.markdown('Rates by <a href="https://www.exchangerate-api.com">Exchange Rate API</a>', unsafe_allow_html=True)
-        st.info("Instale 'websockets' via pip para suporte a WebSocket de baixa latência.")
 
     # --- TELA PRINCIPAL ---
     if not st.session_state.running:
-        st.title("🚀 Sniper Pro v29.0 - Otimizado com WebSocket para Microsegundos")
-        st.write("Configuração de Ciclo Inteligente com Atualizações em Tempo Real via DexScreener WebSocket")
+        st.title("🚀 Sniper Pro v29.0")
+        st.write("Configuração de Ciclo Inteligente")
 
         ca_input = st.text_input("CA do Token (Solana):")
         invest_input = st.number_input(f"Valor por Ordem ({st.session_state.moeda})", value=10.0 * st.session_state.taxa)
@@ -228,17 +186,20 @@ else:
             if price_test:
                 st.session_state.t_nome = get_token_info(ca_input.strip())
                 st.session_state.ca = ca_input.strip()
-                st.session_state.pair_address = get_pair_address(ca_input.strip())
                 st.session_state.invest_usd = invest_input / st.session_state.taxa
+                st.session_state.p_atual = price_test
 
+                # Inicia trades
                 p_inicio = price_test
                 st.session_state.trades = [{"ent": p_inicio, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "h": [p_inicio]} for _ in range(10)]
 
+                # Prepara placeholders texts
                 st.session_state.price_text = ""
                 st.session_state.saldo_text = ""
                 st.session_state.order_texts = [""] * 10
 
                 st.session_state.running = True
+                # Inicia thread
                 thread = threading.Thread(target=monitoring_loop, daemon=True)
                 thread.start()
                 st.rerun()
@@ -246,27 +207,32 @@ else:
                 st.error("Erro: Não foi possível detectar o preço. Verifique o CA.")
 
     else:
+        # --- MODO OPERAÇÃO ATIVA ---
         col_title, col_btn = st.columns([3, 1])
         col_title.subheader(f"🟢 Monitorando: {st.session_state.t_nome}")
         if col_btn.button("🛑 DESATIVAR BOT", use_container_width=True):
             st.session_state.running = False
             st.rerun()
 
+        # Áreas de atualização dinâmica
         price_area = st.empty()
         saldo_area = st.empty()
         order_slots = [st.empty() for _ in range(10)]
 
-        update_ui_from_price()  # Atualiza com preço atual do WS
+        # Atualiza UI com session_state (rerun chamará isso novamente)
+        update_ui_from_price()
 
         price_area.markdown(st.session_state.price_text)
         saldo_area.markdown(st.session_state.saldo_text)
         for i, slot in enumerate(order_slots):
             slot.markdown(st.session_state.order_texts[i], unsafe_allow_html=True)
 
+        # Histórico como tabela
         if st.session_state.historico:
             st.subheader("📜 Histórico de Trades")
             df_hist = pd.DataFrame(st.session_state.historico)
             st.dataframe(df_hist)
 
-        time.sleep(0.05)
+        # Força rerun para updates
+        time.sleep(0.05)  # Pequena pausa para responsividade
         st.rerun()
