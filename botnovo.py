@@ -1,4 +1,4 @@
-limport streamlit as st
+import streamlit as st
 import time
 import requests
 import pandas as pd
