@@ -25,7 +25,7 @@ if "pair_address" not in st.session_state: st.session_state.pair_address = None
 # ⚙️ FUNÇÕES DE MOTOR (SIMPLIFICADAS PARA NÃO TRAVAR)
 # ==========================================================
 def fetch_price(ca):
-    """Fallback HTTP fetch"""
+    """Fallback HTTP fetch - usado como backup se WebSocket falhar."""
     try:
         url = f"https://api.jup.ag/price/v2?ids={ca}"
         response = requests.get(url, timeout=5)
@@ -270,4 +270,3 @@ else:
 
         time.sleep(0.05)
         st.rerun()
-
