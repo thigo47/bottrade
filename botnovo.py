@@ -63,6 +63,22 @@ def ia_brain(pnl, pnl_max, h_precos):
     return False, ""
 
 # ==========================================================
+# 💱 FUNÇÃO PARA CÂMBIO DINÂMICO
+# ==========================================================
+@st.cache_data(ttl=3600)  # Cache por 1 hora
+def get_exchange_rate(base='USD', target='BRL'):
+    try:
+        url = f"https://open.er-api.com/v6/latest/{base}"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        if data.get('result') == 'success':
+            return float(data['rates'].get(target, 5.05))
+        else:
+            return 5.05  # Fallback
+    except:
+        return 5.05  # Fallback em caso de erro
+
+# ==========================================================
 # 🔄 LOOP DE MONITORAMENTO EM THREAD
 # ==========================================================
 def monitoring_loop():
@@ -131,7 +147,7 @@ else:
     with st.sidebar:
         st.header("💰 Gestão Financeira")
         st.session_state.moeda = st.radio("Exibição:", ["USD", "BRL"])
-        st.session_state.taxa = 5.05 if st.session_state.moeda == "BRL" else 1.0
+        st.session_state.taxa = 1.0 if st.session_state.moeda == "USD" else get_exchange_rate()
 
         st.metric("Saldo", f"{'R\( ' if st.session_state.moeda == 'BRL' else ' \)'} {st.session_state.saldo * st.session_state.taxa:,.2f}")
 
@@ -144,6 +160,8 @@ else:
         if st.button("🔴 Logout"):
             st.session_state.auth = False
             st.rerun()
+
+        st.markdown('Rates by <a href="https://www.exchangerate-api.com">Exchange Rate API</a>', unsafe_allow_html=True)
 
     # --- TELA PRINCIPAL ---
     if not st.session_state.running:
