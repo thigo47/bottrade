@@ -1,362 +1,440 @@
+# bot_simples.py
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 import time
-import os
+from datetime import datetime
+
+# ==========================================================
+# CONFIGURAÇÃO
+# ==========================================================
+st.set_page_config(
+    page_title="Sniper Pro - Trade Bot",
+    page_icon="💰",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # ==========================================================
 # INICIALIZAÇÃO DO ESTADO
 # ==========================================================
-if "saldo" not in st.session_state: 
-    st.session_state.saldo = 1000.0
-if "running" not in st.session_state: 
+# Inicializar todas as variáveis de estado
+if 'running' not in st.session_state:
     st.session_state.running = False
-if "historico" not in st.session_state: 
+if 'saldo' not in st.session_state:
+    st.session_state.saldo = 1000.0
+if 'trades' not in st.session_state:
+    st.session_state.trades = []
+if 'historico' not in st.session_state:
     st.session_state.historico = []
-if "ciclo" not in st.session_state: 
-    st.session_state.ciclo = 1
-if "auth" not in st.session_state: 
-    st.session_state.auth = False
-if "moeda" not in st.session_state:
+if 'moeda' not in st.session_state:
     st.session_state.moeda = "USD"
-if "taxa" not in st.session_state:
-    st.session_state.taxa = 1.0
+if 'ciclo' not in st.session_state:
+    st.session_state.ciclo = 0
+if 'alertas' not in st.session_state:
+    st.session_state.alertas = []
+if 'token_info' not in st.session_state:
+    st.session_state.token_info = {"symbol": "Nenhum", "ca": ""}
 
 # ==========================================================
-# FUNÇÕES DE PREÇO
+# FUNÇÕES AUXILIARES
 # ==========================================================
 def fetch_price(ca):
-    """Busca preço do token"""
-    try:
-        url = f"https://api.jup.ag/price/v2?ids={ca}"
-        data = requests.get(url, timeout=5).json()
-        price = data.get('data', {}).get(ca, {}).get('price')
-        if price is not None:
-            return float(price)
-    except:
-        pass
+    """Busca preço do token de forma simplificada"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-        data = requests.get(url, timeout=5).json()
-        price = data.get('pairs', [{}])[0].get('priceUsd')
-        if price is not None:
-            return float(price)
-    except:
-        pass
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            pairs = data.get('pairs', [])
+            if pairs and pairs[0].get('priceUsd'):
+                return float(pairs[0]['priceUsd'])
+    except Exception as e:
+        st.warning(f"Erro ao buscar preço: {e}")
     return None
 
 def get_token_info(ca):
     """Busca informação do token"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-        data = requests.get(url, timeout=5).json()
-        return data.get('pairs', [{}])[0].get('baseToken', {}).get('symbol', 'TOKEN')
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        symbol = data.get('pairs', [{}])[0].get('baseToken', {}).get('symbol', 'TOKEN')
+        return symbol
     except:
         return "TOKEN"
 
-# ==========================================================
-# CÉREBRO IA
-# ==========================================================
-def ia_brain(pnl, pnl_max, h_precos):
-    """Lógica de decisão do bot"""
-    if len(h_precos) < 3: 
-        return False, ""
-    if pnl_max > 1.0 and pnl < pnl_max - 0.2:
-        return True, "IA: Realização de Lucro"
-    if pnl < -2.0:
-        return True, "IA: Stop Preventivo"
-    return False, ""
+def adicionar_alerta(mensagem, tipo="info"):
+    """Adiciona alerta ao sistema"""
+    alerta = {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "mensagem": mensagem,
+        "tipo": tipo
+    }
+    st.session_state.alertas.insert(0, alerta)
+    if len(st.session_state.alertas) > 10:
+        st.session_state.alertas.pop()
+
+def formatar_moeda(valor, moeda):
+    """Formata valor monetário"""
+    if moeda == "BRL":
+        return f"R$ {valor:,.2f}"
+    return f"${valor:,.2f}"
 
 # ==========================================================
-# CÂMBIO
+# LÓGICA DE TRADING SIMPLIFICADA
 # ==========================================================
-@st.cache_data(ttl=3600)
-def get_exchange_rate():
-    """Busca taxa de câmbio USD/BRL"""
-    try:
-        data = requests.get("https://open.er-api.com/v6/latest/USD", timeout=5).json()
-        return float(data['rates'].get('BRL', 5.05))
-    except:
-        return 5.05
+def analisar_trade(preco_atual, preco_entrada, historico):
+    """Lógica simples de trading"""
+    # Calcular PnL
+    pnl = ((preco_atual / preco_entrada) - 1) * 100
+    
+    # Regras básicas
+    if pnl <= -5:  # Stop loss 5%
+        return True, f"Stop Loss ({pnl:.1f}%)"
+    elif pnl >= 10:  # Take profit 10%
+        return True, f"Take Profit ({pnl:.1f}%)"
+    
+    return False, f"Monitorando ({pnl:.1f}%)"
 
 # ==========================================================
-# INTERFACE
+# INTERFACE PRINCIPAL
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v29", layout="wide")
+st.title("🤖 Sniper Pro - Bot de Trading")
+st.markdown("---")
 
-# Segurança - senha por variável de ambiente
-SENHA = os.getenv('SNIPER_SENHA')
-if not SENHA:
-    st.error("❌ Configure a variável de ambiente SNIPER_SENHA")
-    st.stop()
-
-if not st.session_state.auth:
-    st.title("🛡️ Acesso Sniper v29")
-    senha = st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        if senha == SENHA:
-            st.session_state.auth = True
-            st.rerun()
-        else:
-            st.error("Senha incorreta!")
-else:
-    with st.sidebar:
-        st.header("💰 Banca")
-        
-        # Seleção de moeda
-        moeda_anterior = st.session_state.moeda
-        st.session_state.moeda = st.radio("Moeda", ["USD", "BRL"])
-        
-        # Atualizar taxa se moeda mudou
-        if st.session_state.moeda != moeda_anterior or st.session_state.taxa == 1.0:
-            if st.session_state.moeda == "BRL":
-                st.session_state.taxa = get_exchange_rate()
-            else:
-                st.session_state.taxa = 1.0
-        
-        # Exibir saldo
-        saldo_formatado = st.session_state.saldo * st.session_state.taxa
-        if st.session_state.moeda == "BRL":
-            st.metric("Saldo", f"R$ {saldo_formatado:,.2f}")
-        else:
-            st.metric("Saldo", f"$ {saldo_formatado:,.2f}")
-        
-        # Ajustar saldo
-        st.divider()
-        st.subheader("🔄 Ajustes")
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Controles")
+    
+    # Seleção de moeda
+    st.session_state.moeda = st.radio(
+        "Moeda de exibição:",
+        ["USD", "BRL"],
+        index=0
+    )
+    
+    # Informações da conta
+    st.subheader("💰 Banca")
+    st.metric("Saldo Disponível", formatar_moeda(st.session_state.saldo, st.session_state.moeda))
+    
+    # Ajuste de saldo
+    with st.expander("Ajustar Saldo"):
         novo_saldo = st.number_input(
-            f"Novo saldo ({st.session_state.moeda})", 
-            value=float(saldo_formatado),
-            min_value=0.0
+            "Novo saldo:",
+            min_value=0.0,
+            value=float(st.session_state.saldo),
+            step=100.0
+        )
+        if st.button("Atualizar"):
+            st.session_state.saldo = novo_saldo
+            adicionar_alerta(f"Saldo atualizado: {formatar_moeda(novo_saldo, st.session_state.moeda)}", "success")
+            st.rerun()
+    
+    # Controles gerais
+    st.markdown("---")
+    st.subheader("🎮 Ações")
+    
+    if st.button("🔄 Atualizar Página", use_container_width=True):
+        st.rerun()
+    
+    if st.session_state.historico:
+        if st.button("📊 Exportar Dados", use_container_width=True):
+            df = pd.DataFrame(st.session_state.historico)
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="⬇️ Baixar CSV",
+                data=csv,
+                file_name="trades_historico.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    
+    if st.button("🧹 Limpar Histórico", use_container_width=True):
+        st.session_state.historico = []
+        st.session_state.alertas = []
+        adicionar_alerta("Histórico limpo", "info")
+        st.rerun()
+
+# ==========================================================
+# ÁREA DE OPERAÇÃO
+# ==========================================================
+if not st.session_state.running:
+    # Bot parado - mostrar configuração
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("🎯 Configurar Nova Operação")
+        
+        # Input do token
+        ca = st.text_input(
+            "Contract Address do Token:",
+            placeholder="Cole o CA do token aqui...",
+            help="Exemplo: So11111111111111111111111111111111111111112"
         )
         
-        if st.button("Salvar Saldo"):
-            st.session_state.saldo = novo_saldo / st.session_state.taxa
-            st.success("Saldo atualizado!")
-            time.sleep(1)
-            st.rerun()
+        # Valor por trade
+        valor_trade = st.number_input(
+            f"Valor por Trade ({st.session_state.moeda}):",
+            min_value=1.0,
+            value=10.0,
+            step=5.0
+        )
         
-        st.divider()
-        if st.button("Logout"):
-            st.session_state.auth = False
-            st.session_state.running = False
-            st.rerun()
-        
-        # Histórico rápido
-        if st.session_state.historico:
-            st.divider()
-            st.subheader("📊 Resumo")
-            df_temp = pd.DataFrame(st.session_state.historico)
-            total_trades = len(df_temp)
-            trades_positivos = len(df_temp[df_temp['pnl'] > 0])
-            win_rate = (trades_positivos / total_trades * 100) if total_trades > 0 else 0
-            st.metric("Win Rate", f"{win_rate:.1f}%")
-            st.metric("Total Trades", total_trades)
-
-    if not st.session_state.running:
-        st.title("🚀 Sniper Pro v29")
-        
-        # Formulário de configuração
-        with st.form("config_form"):
-            ca = st.text_input("Contract Address (CA) do token")
-            
-            valor_min = 0.1 * st.session_state.taxa
-            valor = st.number_input(
-                f"Valor por ordem ({st.session_state.moeda})", 
-                value=10.0 * st.session_state.taxa,
-                min_value=valor_min
-            )
-            
-            submitted = st.form_submit_button("INICIAR BOT")
-            
-            if submitted:
-                if not ca.strip():
-                    st.error("Digite um Contract Address válido")
-                else:
-                    with st.spinner("Buscando preço..."):
-                        preco = fetch_price(ca.strip())
-                        if preco:
-                            st.session_state.ca = ca.strip()
-                            st.session_state.t_nome = get_token_info(ca.strip())
-                            st.session_state.invest_usd = valor / st.session_state.taxa
-                            entrada = preco
-                            
-                            # Inicializa 10 trades
-                            st.session_state.trades = []
-                            for i in range(10):
-                                st.session_state.trades.append({
-                                    "id": i+1,
-                                    "ent": entrada,
-                                    "pnl": 0.0,
-                                    "on": True,
-                                    "max": 0.0,
-                                    "res": "",
-                                    "h": [entrada]
-                                })
-                            
-                            st.session_state.running = True
-                            st.success(f"Bot iniciado para {st.session_state.t_nome}!")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("Não foi possível obter o preço. Verifique o CA.")
-    else:
-        # Bot rodando
-        col1, col2, col3 = st.columns([3, 1, 1])
-        with col1:
-            st.subheader(f"🟢 Monitorando: {st.session_state.t_nome}")
-        
-        with col2:
-            if st.button("⏸️ Pausar"):
-                st.session_state.running = False
-                st.warning("Bot pausado")
-                time.sleep(1)
-                st.rerun()
-        
-        with col3:
-            if st.button("⏹️ Parar"):
-                st.session_state.running = False
-                st.session_state.trades = []
-                st.success("Bot parado")
-                time.sleep(1)
-                st.rerun()
-        
-        # Buscar preço atual
-        preco_atual = fetch_price(st.session_state.ca)
-        if preco_atual is None:
-            preco_atual = st.session_state.trades[0]["ent"] if st.session_state.trades else 0
-            st.warning("Não foi possível atualizar o preço. Usando último valor conhecido.")
-        
-        # Display info
-        hora = time.strftime("%H:%M:%S")
-        st.markdown(f"### Preço atual: `{preco_atual:.10f}` (às {hora})")
-        
-        # Exibir saldo atualizado
-        saldo_display = st.session_state.saldo * st.session_state.taxa
-        if st.session_state.moeda == "BRL":
-            st.markdown(f"**Saldo:** R$ {saldo_display:,.2f}")
-        else:
-            st.markdown(f"**Saldo:** $ {saldo_display:,.2f}")
-        
-        # Processar trades
-        st.divider()
-        st.subheader("📈 Trades Ativos")
-        
-        # Criar colunas para os trades
-        cols = st.columns(5)
-        
-        for i, trade in enumerate(st.session_state.trades):
-            col_idx = i % 5
-            
-            with cols[col_idx]:
-                if trade["on"]:
-                    # Atualizar PnL
-                    trade["pnl"] = ((preco_atual / trade["ent"]) - 1) * 100
-                    if trade["pnl"] > trade["max"]:
-                        trade["max"] = trade["pnl"]
-                    
-                    # Adicionar ao histórico
-                    trade["h"].append(preco_atual)
-                    if len(trade["h"]) > 5:
-                        trade["h"].pop(0)
-                    
-                    # Verificar se deve fechar
-                    fechar, motivo = ia_brain(trade["pnl"], trade["max"], trade["h"])
-                    
-                    if fechar:
-                        trade["on"] = False
-                        trade["res"] = motivo
-                        lucro = st.session_state.invest_usd * (trade["pnl"] / 100)
-                        st.session_state.saldo += lucro
-                        
-                        # Registrar no histórico
-                        st.session_state.historico.append({
-                            "ciclo": st.session_state.ciclo,
-                            "ordem": trade["id"],
-                            "pnl": round(trade["pnl"], 2),
-                            "lucro_usd": round(lucro, 2),
-                            "motivo": motivo,
-                            "timestamp": hora
-                        })
+        # Botão para verificar token
+        if ca and st.button("🔍 Verificar Token", use_container_width=True):
+            with st.spinner("Buscando informações do token..."):
+                preco = fetch_price(ca.strip())
+                simbolo = get_token_info(ca.strip())
                 
-                # Display do trade
-                with st.container(border=True):
-                    status = "🟢" if trade["on"] else "🔴"
-                    pnl_color = "green" if trade["pnl"] >= 0 else "red"
-                    
-                    st.markdown(f"**{status} Trade {trade['id']}**")
-                    st.markdown(f"<span style='color:{pnl_color}'>{trade['pnl']:+.2f}%</span>", 
-                               unsafe_allow_html=True)
-                    
-                    if not trade["on"]:
-                        st.caption(f"✓ {trade['res']}")
+                if preco:
+                    st.success(f"✅ **{simbolo}** | Preço atual: ${preco:.10f}")
+                    st.session_state.token_info = {"symbol": simbolo, "ca": ca.strip(), "preco": preco}
+                else:
+                    st.error("❌ Não foi possível encontrar o token. Verifique o CA.")
         
-        # Incrementar ciclo
-        st.session_state.ciclo += 1
+        # Botão para iniciar
+        if st.button("🚀 Iniciar Bot", type="primary", use_container_width=True, disabled=not ca):
+            if not ca.strip():
+                st.error("Por favor, insira um Contract Address válido")
+            else:
+                with st.spinner("Iniciando bot..."):
+                    preco = fetch_price(ca.strip())
+                    if preco:
+                        # Configurar estado
+                        st.session_state.token_info = {
+                            "symbol": get_token_info(ca.strip()),
+                            "ca": ca.strip(),
+                            "preco_entrada": preco
+                        }
+                        
+                        # Criar trades
+                        st.session_state.trades = []
+                        for i in range(10):
+                            st.session_state.trades.append({
+                                "id": i + 1,
+                                "entrada": preco,
+                                "pnl": 0.0,
+                                "ativo": True,
+                                "motivo": "",
+                                "historico": [preco]
+                            })
+                        
+                        st.session_state.valor_trade = valor_trade
+                        st.session_state.running = True
+                        adicionar_alerta(f"Bot iniciado para {st.session_state.token_info['symbol']}", "success")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível obter o preço do token")
+    
+    with col2:
+        # Informações úteis
+        st.info("""
+        **📌 Instruções Rápidas:**
         
-        # Histórico de trades fechados
-        if st.session_state.historico:
-            st.divider()
-            st.subheader("📜 Histórico de Trades Fechados")
-            
-            df = pd.DataFrame(st.session_state.historico)
-            
-            # Mostrar métricas
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                total_trades = len(df)
-                st.metric("Total Trades", total_trades)
-            
-            with col2:
-                trades_positivos = len(df[df['pnl'] > 0])
-                win_rate = (trades_positivos / total_trades * 100) if total_trades > 0 else 0
-                st.metric("Win Rate", f"{win_rate:.1f}%")
-            
-            with col3:
-                lucro_total = df['lucro_usd'].sum()
-                st.metric("Lucro Total", f"$ {lucro_total:+.2f}")
-            
-            # Tabela
-            st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "ciclo": "Ciclo",
-                    "ordem": "Ordem",
-                    "pnl": st.column_config.NumberColumn("PnL %", format="+.2f"),
-                    "lucro_usd": st.column_config.NumberColumn("Lucro $", format="+.2f"),
-                    "motivo": "Motivo",
-                    "timestamp": "Hora"
-                }
-            )
+        1. Cole o CA do token
+        2. Defina o valor por trade
+        3. Clique em "Verificar Token"
+        4. Inicie o bot
         
-        # Gráfico simples sem Plotly
-        if st.session_state.trades and any(trade["on"] for trade in st.session_state.trades):
-            st.divider()
-            st.subheader("📊 Evolução de Preços")
-            
-            # Coletar dados para o gráfico
-            dados_grafico = []
-            for trade in st.session_state.trades[:3]:  # Mostrar apenas 3 trades
-                if trade["h"]:
-                    for i, preco in enumerate(trade["h"]):
-                        dados_grafico.append({
-                            "Trade": f"Trade {trade['id']}",
-                            "Período": i,
-                            "Preço": preco
-                        })
-            
-            if dados_grafico:
-                df_grafico = pd.DataFrame(dados_grafico)
-                st.line_chart(
-                    df_grafico,
-                    x="Período",
-                    y="Preço",
-                    color="Trade",
-                    height=300
+        **🔍 Onde encontrar tokens?**
+        - DexScreener
+        - Birdeye
+        - Jupiter
+        
+        **⚠️ Aviso:**
+        Este é um simulador educativo.
+        """)
+
+else:
+    # Bot rodando
+    col1, col2, col3 = st.columns([3, 1, 1])
+    
+    with col1:
+        st.subheader(f"📈 Monitorando: {st.session_state.token_info['symbol']}")
+    
+    with col2:
+        if st.button("⏸️ Pausar", use_container_width=True):
+            st.session_state.running = False
+            adicionar_alerta("Bot pausado", "warning")
+            st.rerun()
+    
+    with col3:
+        if st.button("⏹️ Parar", type="secondary", use_container_width=True):
+            st.session_state.running = False
+            st.session_state.trades = []
+            adicionar_alerta("Bot parado", "info")
+            st.rerun()
+    
+    # Buscar preço atual
+    preco_atual = fetch_price(st.session_state.token_info['ca'])
+    if preco_atual is None:
+        preco_atual = st.session_state.token_info.get('preco_entrada', 0)
+        st.warning("Usando último preço conhecido")
+    
+    # Informações em tempo real
+    st.markdown("---")
+    
+    col_info1, col_info2, col_info3 = st.columns(3)
+    
+    with col_info1:
+        st.metric("Preço Atual", f"${preco_atual:.10f}")
+    
+    with col_info2:
+        st.metric("Saldo", formatar_moeda(st.session_state.saldo, st.session_state.moeda))
+    
+    with col_info3:
+        st.metric("Última Atualização", datetime.now().strftime("%H:%M:%S"))
+    
+    # Trades ativos
+    st.markdown("---")
+    st.subheader("📊 Trades Ativos")
+    
+    # Mostrar trades em colunas
+    cols = st.columns(5)
+    
+    for i, trade in enumerate(st.session_state.trades):
+        col_idx = i % 5
+        
+        with cols[col_idx]:
+            if trade["ativo"]:
+                # Atualizar trade
+                fechar, motivo = analisar_trade(
+                    preco_atual, 
+                    trade["entrada"], 
+                    trade["historico"]
                 )
+                
+                # Calcular PnL
+                pnl = ((preco_atual / trade["entrada"]) - 1) * 100
+                trade["pnl"] = pnl
+                trade["historico"].append(preco_atual)
+                
+                if len(trade["historico"]) > 5:
+                    trade["historico"].pop(0)
+                
+                if fechar:
+                    trade["ativo"] = False
+                    trade["motivo"] = motivo
+                    
+                    # Calcular resultado
+                    resultado = st.session_state.valor_trade * (pnl / 100)
+                    st.session_state.saldo += resultado
+                    
+                    # Registrar no histórico
+                    st.session_state.historico.append({
+                        "trade_id": trade["id"],
+                        "entrada": trade["entrada"],
+                        "saida": preco_atual,
+                        "pnl": round(pnl, 2),
+                        "resultado": round(resultado, 2),
+                        "motivo": motivo,
+                        "hora": datetime.now().strftime("%H:%M:%S")
+                    })
+            
+            # Mostrar trade
+            with st.container(border=True):
+                # Status
+                status = "🟢" if trade["ativo"] else "🔴"
+                st.markdown(f"**{status} Trade {trade['id']}**")
+                
+                # PnL
+                cor = "green" if trade["pnl"] >= 0 else "red"
+                st.markdown(f"<span style='color:{cor}'>**{trade['pnl']:+.2f}%**</span>", 
+                           unsafe_allow_html=True)
+                
+                # Informações adicionais
+                st.caption(f"Entrada: ${trade['entrada']:.8f}")
+                
+                if trade["motivo"]:
+                    st.caption(f"📌 {trade['motivo']}")
+    
+    st.session_state.ciclo += 1
+    
+    # Histórico de trades
+    if st.session_state.historico:
+        st.markdown("---")
+        st.subheader("📜 Histórico de Trades")
         
-        # Atualização automática (modo seguro)
-        time.sleep(3)  # Espera 3 segundos
-        st.rerun()
+        df = pd.DataFrame(st.session_state.historico)
+        
+        # Métricas rápidas
+        col_met1, col_met2, col_met3 = st.columns(3)
+        
+        with col_met1:
+            total = len(df)
+            st.metric("Total Trades", total)
+        
+        with col_met2:
+            positivos = len(df[df['pnl'] > 0])
+            win_rate = (positivos / total * 100) if total > 0 else 0
+            st.metric("Win Rate", f"{win_rate:.1f}%")
+        
+        with col_met3:
+            lucro_total = df['resultado'].sum()
+            st.metric("Lucro Total", f"${lucro_total:+.2f}")
+        
+        # Tabela
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
+    
+    # Alertas recentes
+    if st.session_state.alertas:
+        with st.expander("🚨 Alertas Recentes"):
+            for alerta in st.session_state.alertas[:5]:
+                if alerta['tipo'] == 'success':
+                    st.success(f"{alerta['time']} - {alerta['mensagem']}")
+                elif alerta['tipo'] == 'warning':
+                    st.warning(f"{alerta['time']} - {alerta['mensagem']}")
+                else:
+                    st.info(f"{alerta['time']} - {alerta['mensagem']}")
+    
+    # Atualização automática
+    time.sleep(3)
+    st.rerun()
+
+# ==========================================================
+# RODAPÉ
+# ==========================================================
+st.markdown("---")
+footer_col1, footer_col2, footer_col3 = st.columns(3)
+
+with footer_col1:
+    st.caption(f"🔄 Ciclo: {st.session_state.ciclo}")
+
+with footer_col2:
+    st.caption("⚠️ Simulador educativo - Use por sua conta")
+
+with footer_col3:
+    st.caption("🤖 Sniper Pro v1.0")
+
+# ==========================================================
+# ESTILOS CSS ADICIONAIS
+# ==========================================================
+st.markdown("""
+<style>
+    /* Melhorar a aparência dos containers */
+    .stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: bold;
+    }
+    
+    /* Estilo para métricas */
+    .stMetric {
+        background-color: #f0f2f6;
+        padding: 10px;
+        border-radius: 10px;
+        border-left: 5px solid #ff4b4b;
+    }
+    
+    /* Alertas personalizados */
+    .stAlert {
+        border-radius: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
