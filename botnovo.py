@@ -1,14 +1,14 @@
-import streamlit as st
+limport streamlit as st
 import time
 import requests
 import pandas as pd
 from datetime import datetime
 import threading
 import os
-import functools
 import asyncio
-from gql import gql, Client
-from gql.transport.websockets import WebsocketsTransport
+import websockets
+import base64
+import json
 
 # ==========================================================
 # 💾 INICIALIZAÇÃO SEGURA DO ESTADO (NÃO QUEBRA NO REBOOT)
@@ -19,12 +19,12 @@ if "historico" not in st.session_state: st.session_state.historico = []
 if "ciclo" not in st.session_state: st.session_state.ciclo = 1
 if "auth" not in st.session_state: st.session_state.auth = False
 if "p_atual" not in st.session_state: st.session_state.p_atual = None
+if "pair_address" not in st.session_state: st.session_state.pair_address = None
 
 # ==========================================================
 # ⚙️ FUNÇÕES DE MOTOR (SIMPLIFICADAS PARA NÃO TRAVAR)
 # ==========================================================
-@functools.lru_cache(maxsize=128)
-def fetch_price(ca, _cache_buster=None):
+def fetch_price(ca):
     """Fallback HTTP fetch"""
     try:
         url = f"https://api.jup.ag/price/v2?ids={ca}"
@@ -46,6 +46,14 @@ def get_token_info(ca):
         return res.get('pairs', [{}])[0].get('baseToken', {}).get('symbol', 'TOKEN')
     except:
         return "TOKEN"
+
+def get_pair_address(ca):
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
+        res = requests.get(url, timeout=5).json()
+        return res.get('pairs', [{}])[0].get('pairAddress', None)
+    except:
+        return None
 
 # ==========================================================
 # 🧠 CÉREBRO IA v29 (AUTÔNOMO)
@@ -83,57 +91,52 @@ def get_exchange_rate(base='USD', target='BRL'):
 # ==========================================================
 # 🔄 LOOP DE MONITORAMENTO EM THREAD COM WEBSOCKET PARA BAIXA LATÊNCIA
 # ==========================================================
+def generate_sec_websocket_key():
+    random_bytes = os.urandom(16)
+    key = base64.b64encode(random_bytes).decode('utf-8')
+    return key
+
 async def ws_monitoring():
-    bitquery_api_key = os.getenv('BITQUERY_API_KEY')  # Defina no .env ou GitHub Secrets
-    if not bitquery_api_key:
-        st.error("BITQUERY_API_KEY não definida. Cadastre-se em bitquery.io para obter uma chave gratuita.")
+    headers = {
+        "Host": "io.dexscreener.com",
+        "Connection": "Upgrade",
+        "Pragma": "no-cache",
+        "Cache-Control": "no-cache",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Upgrade": "websocket",
+        "Origin": "https://dexscreener.com",
+        "Sec-WebSocket-Version": 13,
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Sec-WebSocket-Key": generate_sec_websocket_key()
+    }
+    pair_address = st.session_state.pair_address
+    if not pair_address:
         return
 
-    transport = WebsocketsTransport(
-        url="wss://graphql.bitquery.io/graphql",
-        headers={"Authorization": f"Bearer {bitquery_api_key}"}
-    )
-
-    client = Client(transport=transport, fetch_schema_from_transport=True)
-
-    subscription = gql("""
-    subscription MyQuery {
-      Solana {
-        DEXTradeByTokens(
-          where: {
-            Trade: {
-              Currency: { MintAddress: { is: "%s" } }
-              Side: { Currency: { MintAddress: { is: "So11111111111111111111111111111111111111112" } } }
-              Dex: { ProgramAddress: { is: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8" } }
-            }
-            Transaction: { Result: { Success: true } }
-          }
-        ) {
-          Block { Time }
-          Trade {
-            PriceInUSD
-          }
-          Transaction { Signature }
-        }
-      }
-    }
-    """ % st.session_state.ca)  # Insira o MintAddress do token
-
-    async for result in client.subscribe_async(subscription):
-        if not st.session_state.running:
-            break
-        try:
-            trade = result['Solana']['DEXTradeByTokens'][0]['Trade']
-            st.session_state.p_atual = float(trade['PriceInUSD'])
-        except (KeyError, IndexError):
-            pass  # Sem novos trades
+    uri = f"wss://io.dexscreener.com/dex/screener/pairs/h24/1?pairAddress={pair_address}"
+    
+    async with websockets.connect(uri, extra_headers=headers) as websocket:
+        while st.session_state.running:
+            try:
+                message_raw = await websocket.recv()
+                message = json.loads(message_raw)
+                if "pairs" in message and message["pairs"]:
+                    pair = message["pairs"][0]
+                    st.session_state.p_atual = float(pair.get("priceUsd", st.session_state.p_atual))
+            except Exception as e:
+                print(f"WebSocket error: {e}")
+                break
 
 def monitoring_loop():
     # Inicializa preço com fallback
     st.session_state.p_atual = fetch_price(st.session_state.ca)
 
     # Roda o async WS em loop
-    asyncio.run(ws_monitoring())
+    try:
+        asyncio.run(ws_monitoring())
+    except Exception as e:
+        print(f"Async error: {e}")
 
     # Fallback polling se WS falhar
     while st.session_state.running:
@@ -210,12 +213,12 @@ else:
             st.rerun()
 
         st.markdown('Rates by <a href="https://www.exchangerate-api.com">Exchange Rate API</a>', unsafe_allow_html=True)
-        st.info("Para baixa latência, defina BITQUERY_API_KEY no .env (cadastre-se em bitquery.io)")
+        st.info("Instale 'websockets' via pip para suporte a WebSocket de baixa latência.")
 
     # --- TELA PRINCIPAL ---
     if not st.session_state.running:
-        st.title("🚀 Sniper Pro v29.0 - Otimizado para Baixa Latência")
-        st.write("Configuração de Ciclo Inteligente com WebSocket Real-Time")
+        st.title("🚀 Sniper Pro v29.0 - Otimizado com WebSocket para Microsegundos")
+        st.write("Configuração de Ciclo Inteligente com Atualizações em Tempo Real via DexScreener WebSocket")
 
         ca_input = st.text_input("CA do Token (Solana):")
         invest_input = st.number_input(f"Valor por Ordem ({st.session_state.moeda})", value=10.0 * st.session_state.taxa)
@@ -225,6 +228,7 @@ else:
             if price_test:
                 st.session_state.t_nome = get_token_info(ca_input.strip())
                 st.session_state.ca = ca_input.strip()
+                st.session_state.pair_address = get_pair_address(ca_input.strip())
                 st.session_state.invest_usd = invest_input / st.session_state.taxa
 
                 p_inicio = price_test
