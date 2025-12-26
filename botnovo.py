@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 # ==========================================================
-# 💾 BANCO DE DADOS
+# 💾 PERSISTÊNCIA DE DADOS
 # ==========================================================
 @st.cache_resource
 def get_db():
@@ -14,151 +14,138 @@ def get_db():
 db = get_db()
 
 # ==========================================================
-# 🧠 CÉREBRO IA v24 - DECISÃO EM TEMPO REAL
+# 🧠 CÉREBRO IA v25.0 - LOGIC ENGINE
 # ==========================================================
-def motor_ia_decisao(pnl, pnl_max, historico_precos):
+def decisao_ia_v25(pnl, pnl_max, historico_precos):
     """
-    Decide o momento exato de sair baseado no comportamento do preço.
-    Retorna (True/False, Motivo)
+    Análise de Momentum e Proteção de Capital Ultra-Rápida
     """
-    if len(historico_precos) < 5: return False, ""
+    if len(historico_precos) < 10: return False, ""
 
-    # 1. PROTEÇÃO CONTRA QUEDA BRUSCA (FLASH DUMP)
-    preco_atual = historico_precos[-1]
-    preco_anterior = historico_precos[-2]
-    queda_rapida = ((preco_atual / preco_anterior) - 1) * 100
+    # 1. ANÁLISE DE MOMENTUM (ACELERAÇÃO)
+    ultimos_precos = historico_precos[-5:]
+    subida_media = (ultimos_precos[-1] / ultimos_precos[0]) - 1
     
-    if queda_rapida < -1.5: # Caiu 1.5% em 0.1s? Sai fora.
-        return True, "IA: Flash Dump Detectado"
+    # Se o preço estagnou após uma subida, realiza lucro
+    if pnl > 1.5 and abs(subida_media) < 0.0001:
+        return True, "IA: Exaustão Detectada (Take Profit)"
 
-    # 2. SURFANDO A TENDÊNCIA (TRAILING INTELIGENTE)
-    if pnl_max > 2.0:
-        distancia_do_topo = pnl_max - pnl
-        # Quanto mais ganhamos, menos aceitamos perder de volta
-        limite_retorno = 0.5 if pnl_max < 5.0 else 1.2
-        if distancia_do_topo > limite_retorno:
-            return True, f"IA: Lucro Realizado ({pnl:+.2f}%)"
+    # 2. PROTEÇÃO DE LUCRO EXPONENCIAL
+    # Se o lucro foi alto, a tolerância para devolução é mínima
+    if pnl_max >= 8.0:
+        if pnl < 7.0: return True, "IA: Proteção de Topo (8% -> 7%)"
+    elif pnl_max >= 3.0:
+        if pnl < (pnl_max * 0.8): return True, "IA: Trailing 80% Ativado"
 
-    # 3. STOP LOSS DINÂMICO (BASEADO NA VOLATILIDADE)
-    # Se nunca ficou positivo e caiu mais de 2.5%, corta o risco
-    if pnl < -2.5 and pnl_max < 0.5:
-        return True, "IA: Risco Excessivo (Stop)"
+    # 3. STOP LOSS INTELIGENTE (ANTI-DUMP)
+    # Se cair mais de 1% em apenas 2 atualizações de preço, é dump
+    queda_relampago = (historico_precos[-1] / historico_precos[-3]) - 1
+    if queda_relampago < -0.01:
+        return True, "IA: Alerta de Dump (Saída Imediata)"
 
-    # 4. EXAUSTÃO (PREÇO PARADO NO TOPO)
-    if pnl > 1.0:
-        ultimos_3 = historico_precos[-3:]
-        if max(ultimos_3) == min(ultimos_3): # Preço não mexe mais
-            return True, "IA: Exaustão de Compra"
+    # Stop Fixo de Segurança IA
+    if pnl < -2.8:
+        return True, "IA: Corte de Risco"
 
     return False, ""
 
 # ==========================================================
-# ⚙️ FUNÇÕES DE MERCADO
+# ⚙️ ENGINE DE MERCADO
 # ==========================================================
-def buscar_melhor_pool(ca):
+def get_market_data(ca):
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
         res = requests.get(url, timeout=5).json()
-        pools = [p for p in res['pairs'] if p['chainId'] == 'solana' and 'SOL' in p['quoteToken']['symbol']]
-        if pools:
-            melhor = max(pools, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
-            return {"nome": melhor['baseToken']['symbol'], "pair": melhor['pairAddress'], "preco": float(melhor['priceUsd'])}
+        pair = max([p for p in res['pairs'] if p['chainId'] == 'solana'], 
+                   key=lambda x: float(x['liquidity']['usd']))
+        return {"nome": pair['baseToken']['symbol'], "pair": pair['pairAddress'], "preco": float(pair['priceUsd'])}
     except: return None
 
-def monitorar_preco_pool(pair_address):
+def get_price(pair_addr):
     try:
-        url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{pair_address}"
+        url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{pair_addr}"
         return float(requests.get(url, timeout=1).json()['pair']['priceUsd'])
     except: return None
 
 # ==========================================================
-# 🖥️ INTERFACE v24.0 (FULL AI)
+# 🖥️ INTERFACE
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v24 - Full AI", layout="wide")
+st.set_page_config(page_title="Sniper Pro v25 - Ultra AI", layout="wide")
 
 if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if "running" not in st.session_state: st.session_state.running = False
 
 if not st.session_state.logged_in:
-    st.title("🤖 Sniper Full AI")
-    u, p = st.text_input("Usuário"), st.text_input("Senha", type="password")
-    if st.button("Aceder ao Sistema"):
+    st.title("🧠 Sniper Ultra AI v25")
+    u, p = st.text_input("User"), st.text_input("Pass", type="password")
+    if st.button("Acessar"):
         if u == "admin" and p == "1234":
             st.session_state.logged_in = True
             st.rerun()
 else:
     with st.sidebar:
-        st.header("📊 Painel de Controlo")
+        st.header("🎮 Dashboard")
         moeda = st.radio("Moeda:", ["USD", "BRL"])
-        taxa = 5.05 if moeda == "BRL" else 1.0
-        st.metric("Banca Total", f"{'R$' if moeda == 'BRL' else '$'} {db['saldo'] * taxa:,.2f}")
-        
-        st.info("💡 A IA está configurada para Autopiloto. Os sliders foram removidos para decisão 100% algorítmica.")
-        
-        if st.button("Sair"):
+        t_view = 5.05 if moeda == "BRL" else 1.0
+        st.metric("Saldo Real", f"{'R$' if moeda == 'BRL' else '$'} {db['saldo'] * t_view:,.2f}")
+        if st.button("Log Out"):
             st.session_state.logged_in = False
             st.rerun()
 
     if not st.session_state.running:
-        st.title("🚀 Sniper Pro v24.0 - Autopiloto")
-        ca_input = st.text_input("Endereço do Token (CA):")
-        invest_input = st.number_input(f"Valor por Ordem ({moeda})", value=10.0 * taxa)
-
-        if st.button("⚡ ACTIVAR IA"):
-            data = buscar_melhor_pool(ca_input.strip())
+        st.title("🚀 Sniper Pro v25.0")
+        ca_input = st.text_input("Token CA:")
+        val_input = st.number_input(f"Valor Ordem ({moeda})", value=10.0 * t_view)
+        
+        if st.button("🔥 INICIAR IA AUTÓNOMA"):
+            data = get_market_data(ca_input.strip())
             if data:
                 st.session_state.update({"t_nome": data['nome'], "t_pair": data['pair'], 
-                                        "t_preco": data['preco'], "invest_usd": invest_input/taxa, "running": True})
+                                         "t_preco": data['preco'], "invest": val_input/t_view, "running": True})
                 st.rerun()
     else:
-        # EXECUÇÃO IA
-        col_head, col_ctrl = st.columns([3, 1])
-        col_head.subheader(f"🤖 IA Operando: {st.session_state.t_nome}")
-        if col_ctrl.button("🛑 DESATIVAR IA", use_container_width=True):
+        # PAINEL DE EXECUÇÃO IA
+        c1, c2 = st.columns([3, 1])
+        c1.subheader(f"🤖 IA Operando: {st.session_state.t_nome}")
+        if c2.button("🛑 PARAR AGORA"):
             st.session_state.running = False
             st.rerun()
 
-        monitor_preco, saldo_place = col_ctrl.empty(), col_ctrl.empty()
+        price_mon = c2.empty()
+        bal_mon = c2.empty()
         slots = [st.empty() for _ in range(10)]
-        
+
         while st.session_state.running:
-            p_start = monitorar_preco_pool(st.session_state.t_pair)
-            if not p_start: continue
+            p_ref = get_price(st.session_state.t_pair)
+            if not p_ref: continue
             
-            # Reset de Ciclo
-            trades = [{"ent": p_start, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "hist_p": [p_start]} for _ in range(10)]
-            ultimo_p = p_start
-
+            trades = [{"ent": p_ref, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "h": [p_ref]} for _ in range(10)]
+            
             while any(t['on'] for t in trades) and st.session_state.running:
-                p_now = monitorar_preco_pool(st.session_state.t_pair)
+                p_now = get_price(st.session_state.t_pair)
                 if p_now:
-                    # Atualiza Global
-                    cor = "#00FF00" if p_now >= ultimo_p else "#FF4B4B"
-                    monitor_preco.markdown(f"<h2 style='text-align:center; color:{cor};'>{p_now:.8f}</h2>", unsafe_allow_html=True)
-                    saldo_place.markdown(f"<p style='text-align:center;'>Saldo: {db['saldo']*taxa:,.2f}</p>", unsafe_allow_html=True)
-                    ultimo_p = p_now
-
+                    price_mon.markdown(f"<div style='background:#000; padding:10px; border-radius:5px; text-align:center; font-size:24px;'>{p_now:.8f}</div>", unsafe_allow_html=True)
+                    bal_mon.info(f"Saldo: {db['saldo']*t_view:,.2f}")
+                    
                     for i, t in enumerate(trades):
                         if t['on']:
                             t['pnl'] = ((p_now / t['ent']) - 1) * 100
                             if t['pnl'] > t['max']: t['max'] = t['pnl']
-                            t['hist_p'].append(p_now)
-                            if len(t['hist_p']) > 10: t['hist_p'].pop(0)
+                            t['h'].append(p_now)
+                            if len(t['h']) > 20: t['h'].pop(0)
 
-                            # DECISÃO DA IA
-                            deve_fechar, motivo = motor_ia_decisao(t['pnl'], t['max'], t['hist_p'])
+                            # CHAMADA DO CÉREBRO IA
+                            finalizar, motivo = decisao_ia_v25(t['pnl'], t['max'], t['h'])
                             
-                            if deve_fechar:
+                            if finalizar:
                                 t['on'] = False
                                 t['res'] = motivo
-                                liq = (st.session_state.invest_usd * (t['pnl']/100)) - (st.session_state.invest_usd * 0.01)
-                                db['saldo'] += liq
+                                db['saldo'] += (st.session_state.invest * (t['pnl']/100)) - (st.session_state.invest * 0.01)
 
-                            icon = "🔵" if t['on'] else "🤖"
-                            slots[i].markdown(f"{icon} Ordem {i+1}: **{t['pnl']:+.2f}%** | {t['res']}")
+                            color = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
+                            slots[i].markdown(f"**Ordem {i+1}:** <span style='color:{color}'>{t['pnl']:+.2f}%</span> | {t['res']}", unsafe_allow_html=True)
                 
                 time.sleep(0.05)
             
-            # Log de Ciclo
-            db['historico'].insert(0, {"CICLO": f"#{db['ciclo']}", "STATUS": "Finalizado pela IA"})
+            db['historico'].insert(0, {"DATA": datetime.now().strftime("%H:%M")})
             db['ciclo'] += 1
