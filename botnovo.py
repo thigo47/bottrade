@@ -6,1261 +6,817 @@ import time
 import json
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
-import plotly.express as px
 from typing import Dict, List, Tuple, Optional
 import warnings
-import hashlib
 warnings.filterwarnings('ignore')
 
 # ==========================================================
 # CONFIGURAÇÃO
 # ==========================================================
 st.set_page_config(
-    page_title="Sniper Pro AI v2.0",
+    page_title="Sniper Pro AI - Auto Trader",
     page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # ==========================================================
-# SISTEMA DE IA AVANÇADO - NEURAL NETWORK SIMULADA
+# SISTEMA DE MONITORAMENTO AUTOMÁTICO
 # ==========================================================
-class NeuralNetworkAI:
-    """Rede Neural Artificial para previsão de preços"""
+class AutoTradeMonitor:
+    """Monitora e executa trades automaticamente"""
     
     def __init__(self):
-        self.weights = {
-            'volume': 0.3,
-            'liquidity': 0.25,
-            'sentiment': 0.2,
-            'momentum': 0.15,
-            'age': 0.1
-        }
-        self.history = []
-        self.accuracy = 0.75  # Meta inicial de 75%
-        
-    def predict_trend(self, token_data: Dict) -> Dict:
-        """Prediz tendência usando múltiplos fatores"""
-        
-        # Extrair features
-        features = self.extract_features(token_data)
-        
-        # Calcular score neural
-        neural_score = 0
-        for feature, value in features.items():
-            if feature in self.weights:
-                neural_score += value * self.weights[feature]
-        
-        # Normalizar score para 0-100
-        final_score = min(100, max(0, neural_score * 100))
-        
-        # Determinar tendência
-        if final_score >= 80:
-            trend = "FORTE_ALTA"
-            confidence = final_score / 100
-            action = "COMPRAR_AGRESIVO"
-        elif final_score >= 65:
-            trend = "ALTA"
-            confidence = final_score / 100
-            action = "COMPRAR"
-        elif final_score >= 50:
-            trend = "NEUTRO"
-            confidence = final_score / 100
-            action = "MONITORAR"
-        elif final_score >= 35:
-            trend = "BAIXA"
-            confidence = (100 - final_score) / 100
-            action = "AGUARDAR"
-        else:
-            trend = "FORTE_BAIXA"
-            confidence = (100 - final_score) / 100
-            action = "EVITAR"
-        
-        # Adicionar aprendizado
-        self.adjust_weights(features, final_score)
-        
-        return {
-            'score': round(final_score, 2),
-            'trend': trend,
-            'action': action,
-            'confidence': round(confidence, 3),
-            'features': features
+        self.active_trades = []
+        self.trade_history = []
+        self.performance = {
+            'total_trades': 0,
+            'winning_trades': 0,
+            'total_profit': 0.0,
+            'max_profit': 0.0,
+            'max_loss': 0.0
         }
     
-    def extract_features(self, token_data: Dict) -> Dict:
-        """Extrai features do token para análise neural"""
+    def create_trade(self, token_data: Dict, position_size: float, 
+                     entry_price: float, stop_loss: float, 
+                     take_profit: float) -> Dict:
+        """Cria um novo trade com parâmetros definidos"""
         
-        features = {}
+        trade = {
+            'id': len(self.active_trades) + 1,
+            'symbol': token_data.get('symbol', 'TOKEN'),
+            'ca': token_data.get('ca', ''),
+            'entry_price': entry_price,
+            'current_price': entry_price,
+            'position_size': position_size,
+            'stop_loss': stop_loss,  # Preço absoluto
+            'take_profit': take_profit,  # Preço absoluto
+            'status': 'ACTIVE',
+            'entry_time': datetime.now(),
+            'max_profit_percent': 0.0,
+            'current_profit_percent': 0.0,
+            'exit_price': None,
+            'exit_time': None,
+            'exit_reason': None,
+            'trailing_stop_activated': False,
+            'trailing_stop_price': stop_loss
+        }
         
-        try:
-            # Feature 1: Volume (0-1)
-            volume_24h = float(token_data.get('pairs', [{}])[0].get('volume', {}).get('h24', 0))
-            features['volume'] = min(1.0, volume_24h / 1000000)  # Normalizado para 1M
-            
-            # Feature 2: Liquidez (0-1)
-            liquidity = float(token_data.get('pairs', [{}])[0].get('liquidity', {}).get('usd', 0))
-            features['liquidity'] = min(1.0, liquidity / 500000)  # Normalizado para 500K
-            
-            # Feature 3: Sentimento (relação compra/venda)
-            txns = token_data.get('pairs', [{}])[0].get('txns', {}).get('h24', {})
-            buys = txns.get('buys', 1)
-            sells = txns.get('sells', 1)
-            features['sentiment'] = buys / (buys + sells)
-            
-            # Feature 4: Momentum (variação 24h)
-            price_change = float(token_data.get('pairs', [{}])[0].get('priceChange', {}).get('h24', 0))
-            features['momentum'] = max(0, min(1, (price_change + 50) / 100))  # -50% a +50% -> 0-1
-            
-            # Feature 5: Idade (token mais velho = mais confiável)
-            created_at = token_data.get('pairs', [{}])[0].get('pairCreatedAt', 0)
-            if created_at:
-                age_days = (datetime.now() - datetime.fromtimestamp(created_at/1000)).days
-                features['age'] = min(1.0, age_days / 30)  # 30 dias = 1.0
-            else:
-                features['age'] = 0.1
+        self.active_trades.append(trade)
+        return trade
+    
+    def update_trade_prices(self, ca: str, current_price: float):
+        """Atualiza preços de todos os trades do token"""
+        for trade in self.active_trades:
+            if trade['ca'] == ca and trade['status'] == 'ACTIVE':
+                trade['current_price'] = current_price
                 
-        except:
-            # Valores padrão se houver erro
-            features = {'volume': 0.1, 'liquidity': 0.1, 'sentiment': 0.5, 'momentum': 0.5, 'age': 0.1}
-        
-        return features
+                # Calcular PnL atual
+                trade['current_profit_percent'] = (
+                    (current_price - trade['entry_price']) / trade['entry_price']
+                ) * 100
+                
+                # Atualizar máximo profit
+                if trade['current_profit_percent'] > trade['max_profit_percent']:
+                    trade['max_profit_percent'] = trade['current_profit_percent']
+                
+                # Atualizar trailing stop
+                self._update_trailing_stop(trade, current_price)
     
-    def adjust_weights(self, features: Dict, predicted_score: float):
-        """Ajusta pesos da rede neural baseado no aprendizado"""
-        # Simula aprendizado por reforço
-        learning_rate = 0.01
-        
-        # Ajusta pesos baseado na performance das features
-        for feature in self.weights:
-            if feature in features:
-                # Se feature foi importante, aumenta seu peso
-                if features[feature] > 0.7:
-                    self.weights[feature] += learning_rate
-                elif features[feature] < 0.3:
-                    self.weights[feature] -= learning_rate
-        
-        # Normaliza pesos para soma = 1
-        total = sum(self.weights.values())
-        self.weights = {k: v/total for k, v in self.weights.items()}
-    
-    def calculate_entry_point(self, current_price: float, trend: str) -> float:
-        """Calcula ponto de entrada ideal"""
-        if trend in ["FORTE_ALTA", "ALTA"]:
-            # Compra com pequeno desconto
-            return current_price * 0.995  # -0.5%
-        elif trend == "NEUTRO":
-            # Compra no preço atual
-            return current_price
-        else:
-            # Aguarda melhor oportunidade
-            return current_price * 0.98  # -2%
-    
-    def calculate_exit_strategy(self, entry_price: float, trend: str) -> Dict:
-        """Calcula estratégia de saída"""
-        if trend == "FORTE_ALTA":
-            return {
-                'stop_loss': entry_price * 0.94,  # -6%
-                'take_profit_1': entry_price * 1.15,  # +15%
-                'take_profit_2': entry_price * 1.25,  # +25%
-                'trailing_stop': 0.03  # 3%
-            }
-        elif trend == "ALTA":
-            return {
-                'stop_loss': entry_price * 0.93,  # -7%
-                'take_profit_1': entry_price * 1.12,  # +12%
-                'take_profit_2': entry_price * 1.20,  # +20%
-                'trailing_stop': 0.04  # 4%
-            }
-        else:
-            return {
-                'stop_loss': entry_price * 0.90,  # -10%
-                'take_profit_1': entry_price * 1.10,  # +10%
-                'take_profit_2': entry_price * 1.15,  # +15%
-                'trailing_stop': 0.05  # 5%
-            }
-
-# ==========================================================
-# SISTEMA DE ANÁLISE TÉCNICA AVANÇADA
-# ==========================================================
-class TechnicalAnalyzer:
-    """Análise técnica com múltiplos indicadores"""
-    
-    @staticmethod
-    def calculate_rsi(prices: List[float], period: int = 14) -> float:
-        """Calcula RSI (Relative Strength Index)"""
-        if len(prices) < period + 1:
-            return 50.0
-        
-        deltas = np.diff(prices[-period:])
-        gains = np.where(deltas > 0, deltas, 0)
-        losses = np.where(deltas < 0, -deltas, 0)
-        
-        avg_gain = np.mean(gains)
-        avg_loss = np.mean(losses)
-        
-        if avg_loss == 0:
-            return 100.0
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return round(rsi, 2)
-    
-    @staticmethod
-    def calculate_macd(prices: List[float]) -> Dict:
-        """Calcula MACD (Moving Average Convergence Divergence)"""
-        if len(prices) < 26:
-            return {'macd': 0, 'signal': 0, 'histogram': 0}
-        
-        # Médias móveis
-        ema12 = pd.Series(prices).ewm(span=12, adjust=False).mean().iloc[-1]
-        ema26 = pd.Series(prices).ewm(span=26, adjust=False).mean().iloc[-1]
-        
-        macd = ema12 - ema26
-        signal = pd.Series(prices).ewm(span=9, adjust=False).mean().iloc[-1]
-        histogram = macd - signal
-        
-        return {
-            'macd': round(macd, 6),
-            'signal': round(signal, 6),
-            'histogram': round(histogram, 6),
-            'signal_text': "COMPRAR" if macd > signal else "VENDER"
-        }
-    
-    @staticmethod
-    def calculate_bollinger_bands(prices: List[float], period: int = 20) -> Dict:
-        """Calcula Bollinger Bands"""
-        if len(prices) < period:
-            return {'upper': 0, 'middle': 0, 'lower': 0, 'width': 0}
-        
-        sma = np.mean(prices[-period:])
-        std = np.std(prices[-period:])
-        
-        upper = sma + (std * 2)
-        lower = sma - (std * 2)
-        width = (upper - lower) / sma
-        
-        return {
-            'upper': round(upper, 6),
-            'middle': round(sma, 6),
-            'lower': round(lower, 6),
-            'width': round(width, 4),
-            'position': "Sobrecomprado" if prices[-1] > upper else 
-                       "Sobrevendido" if prices[-1] < lower else "Neutro"
-        }
-    
-    @staticmethod
-    def calculate_support_resistance(prices: List[float]) -> Dict:
-        """Calcula níveis de suporte e resistência"""
-        if len(prices) < 10:
-            return {'support': 0, 'resistance': 0}
-        
-        # Encontra mínimos e máximos locais
-        support = min(prices[-10:])
-        resistance = max(prices[-10:])
-        
-        return {
-            'support': round(support, 6),
-            'resistance': round(resistance, 6),
-            'distance_to_support': round((prices[-1] - support) / support * 100, 2),
-            'distance_to_resistance': round((resistance - prices[-1]) / prices[-1] * 100, 2)
-        }
-
-# ==========================================================
-# SISTEMA DE SENTIMENT ANALYSIS
-# ==========================================================
-class SentimentAnalyzer:
-    """Analisa sentimentos do mercado"""
-    
-    @staticmethod
-    def analyze_social_sentiment(token_symbol: str) -> Dict:
-        """Analisa sentimentos de redes sociais (simulado)"""
-        # Em produção, integraria com APIs de Twitter, Telegram, etc.
-        # Aqui simulamos com dados aleatórios
-        
-        np.random.seed(hash(token_symbol) % 1000)
-        
-        return {
-            'twitter_sentiment': np.random.uniform(0.4, 0.9),
-            'telegram_activity': np.random.randint(100, 10000),
-            'reddit_sentiment': np.random.uniform(0.3, 0.8),
-            'overall_sentiment': np.random.uniform(0.4, 0.85),
-            'trend': np.random.choice(['POSITIVO', 'NEUTRO', 'NEGATIVO'], p=[0.6, 0.3, 0.1])
-        }
-    
-    @staticmethod
-    def analyze_onchain_metrics(ca: str) -> Dict:
-        """Analisa métricas on-chain"""
-        try:
-            url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-            response = requests.get(url, timeout=5)
-            data = response.json()
+    def _update_trailing_stop(self, trade: Dict, current_price: float):
+        """Atualiza trailing stop dinâmico"""
+        if trade['max_profit_percent'] >= 5.0:  # Só ativa trailing após 5% de gain
+            # Trailing stop: mantém 30% do lucro máximo
+            trail_distance = trade['max_profit_percent'] * 0.3
+            new_stop = trade['entry_price'] * (1 + (trade['max_profit_percent'] - trail_distance) / 100)
             
-            pair = data.get('pairs', [{}])[0]
-            
+            if new_stop > trade['trailing_stop_price']:
+                trade['trailing_stop_price'] = new_stop
+                trade['trailing_stop_activated'] = True
+    
+    def check_exit_conditions(self, trade: Dict) -> Tuple[bool, str, float]:
+        """Verifica condições de saída do trade"""
+        
+        current_price = trade['current_price']
+        entry_price = trade['entry_price']
+        
+        # 1. TAKE PROFIT - Vários níveis
+        take_profit_levels = [
+            (trade['take_profit'], "TAKE_PROFIT_FULL"),
+            (entry_price * 1.05, "TAKE_PROFIT_5%"),
+            (entry_price * 1.10, "TAKE_PROFIT_10%"),
+            (entry_price * 1.15, "TAKE_PROFIT_15%"),
+            (entry_price * 1.20, "TAKE_PROFIT_20%")
+        ]
+        
+        for tp_price, reason in take_profit_levels:
+            if current_price >= tp_price:
+                return True, reason, current_price
+        
+        # 2. STOP LOSS - Múltiplas condições
+        # Stop loss original
+        if current_price <= trade['stop_loss']:
+            return True, "STOP_LOSS_ORIGINAL", current_price
+        
+        # Stop loss por percentual fixo (-10%)
+        if trade['current_profit_percent'] <= -10.0:
+            return True, "STOP_LOSS_10%", current_price
+        
+        # Trailing stop
+        if trade['trailing_stop_activated'] and current_price <= trade['trailing_stop_price']:
+            return True, "TRAILING_STOP", current_price
+        
+        # Stop loss dinâmico (se teve alto gain e caiu muito)
+        if trade['max_profit_percent'] >= 20.0 and trade['current_profit_percent'] <= trade['max_profit_percent'] * 0.5:
+            return True, "DYNAMIC_STOP", current_price
+        
+        return False, "", 0.0
+    
+    def execute_auto_exit(self):
+        """Executa saídas automáticas para todos os trades ativos"""
+        closed_trades = []
+        
+        for trade in self.active_trades[:]:  # Copia para poder remover
+            if trade['status'] == 'ACTIVE':
+                should_exit, reason, exit_price = self.check_exit_conditions(trade)
+                
+                if should_exit:
+                    # Fechar trade
+                    trade['status'] = 'CLOSED'
+                    trade['exit_price'] = exit_price
+                    trade['exit_time'] = datetime.now()
+                    trade['exit_reason'] = reason
+                    
+                    # Calcular resultado final
+                    profit_percent = ((exit_price - trade['entry_price']) / trade['entry_price']) * 100
+                    profit_value = trade['position_size'] * (profit_percent / 100)
+                    
+                    trade['final_profit_percent'] = profit_percent
+                    trade['final_profit_value'] = profit_value
+                    
+                    # Atualizar performance
+                    self.performance['total_trades'] += 1
+                    if profit_percent > 0:
+                        self.performance['winning_trades'] += 1
+                    self.performance['total_profit'] += profit_value
+                    
+                    if profit_value > 0:
+                        self.performance['max_profit'] = max(self.performance['max_profit'], profit_value)
+                    else:
+                        self.performance['max_loss'] = min(self.performance['max_loss'], profit_value)
+                    
+                    # Mover para histórico
+                    self.trade_history.append(trade.copy())
+                    self.active_trades.remove(trade)
+                    
+                    closed_trades.append(trade)
+        
+        return closed_trades
+    
+    def get_performance_stats(self) -> Dict:
+        """Retorna estatísticas de performance"""
+        if self.performance['total_trades'] == 0:
             return {
-                'large_transactions': pair.get('txns', {}).get('h24', {}).get('buys', 0) + 
-                                     pair.get('txns', {}).get('h24', {}).get('sells', 0),
-                'unique_buyers': np.random.randint(50, 500),
-                'unique_sellers': np.random.randint(30, 400),
-                'whale_activity': np.random.choice(['BAIXA', 'MÉDIA', 'ALTA'], p=[0.3, 0.5, 0.2]),
-                'token_concentration': np.random.uniform(0.1, 0.8)
-            }
-        except:
-            return {
-                'large_transactions': 0,
-                'unique_buyers': 0,
-                'unique_sellers': 0,
-                'whale_activity': 'DESCONHECIDA',
-                'token_concentration': 0.5
-            }
-
-# ==========================================================
-# SISTEMA DE GESTÃO DE RISCO INTELIGENTE
-# ==========================================================
-class SmartRiskManager:
-    """Gestor de risco inteligente com IA"""
-    
-    def __init__(self, initial_balance: float = 1000.0):
-        self.balance = initial_balance
-        self.initial_balance = initial_balance
-        self.trades = []
-        self.max_drawdown = 0
-        self.win_streak = 0
-        self.loss_streak = 0
-        self.consecutive_loss_limit = 3
-        
-    def calculate_position_size(self, token_score: float, confidence: float, current_balance: float) -> Dict:
-        """Calcula tamanho da posição baseado em risco"""
-        
-        # Níveis de risco
-        if token_score >= 80:
-            risk_level = "BAIXO"
-            max_position_percent = 15
-            stop_loss_percent = 4
-        elif token_score >= 65:
-            risk_level = "MODERADO"
-            max_position_percent = 10
-            stop_loss_percent = 6
-        elif token_score >= 50:
-            risk_level = "ALTO"
-            max_position_percent = 5
-            stop_loss_percent = 8
-        else:
-            risk_level = "MUITO ALTO"
-            max_position_percent = 2
-            stop_loss_percent = 10
-        
-        # Ajustar por confiança
-        adjusted_percent = max_position_percent * confidence
-        
-        # Ajustar por sequência de vitórias/derrotas
-        if self.win_streak >= 3:
-            adjusted_percent *= 1.2
-        elif self.loss_streak >= 2:
-            adjusted_percent *= 0.7
-        
-        # Garantir limites
-        final_percent = min(20, max(1, adjusted_percent))
-        
-        position_size = current_balance * (final_percent / 100)
-        
-        return {
-            'risk_level': risk_level,
-            'position_percent': round(final_percent, 2),
-            'position_size': round(position_size, 2),
-            'stop_loss_percent': stop_loss_percent,
-            'max_loss': round(position_size * (stop_loss_percent / 100), 2)
-        }
-    
-    def can_trade(self, token_score: float) -> bool:
-        """Verifica se pode fazer novo trade"""
-        
-        # Verificar drawdown máximo
-        current_drawdown = ((self.initial_balance - self.balance) / self.initial_balance) * 100
-        if current_drawdown > 20:  # Máximo 20% de drawdown
-            return False, "Drawdown máximo atingido"
-        
-        # Verificar sequência de perdas
-        if self.loss_streak >= self.consecutive_loss_limit:
-            return False, f"{self.loss_streak} perdas consecutivas"
-        
-        # Verificar score mínimo
-        if token_score < 40:
-            return False, "Score muito baixo"
-        
-        return True, "OK"
-    
-    def update_stats(self, profit: float):
-        """Atualiza estatísticas após trade"""
-        self.balance += profit
-        self.trades.append(profit)
-        
-        if profit > 0:
-            self.win_streak += 1
-            self.loss_streak = 0
-        else:
-            self.loss_streak += 1
-            self.win_streak = 0
-        
-        # Atualizar max drawdown
-        peak = max(self.trades) if self.trades else self.initial_balance
-        current_drawdown = ((peak - self.balance) / peak) * 100
-        self.max_drawdown = max(self.max_drawdown, current_drawdown)
-    
-    def get_performance_metrics(self) -> Dict:
-        """Retorna métricas de performance"""
-        if not self.trades:
-            return {
-                'win_rate': 0,
-                'avg_win': 0,
-                'avg_loss': 0,
-                'profit_factor': 0,
-                'sharpe_ratio': 0,
-                'max_drawdown': 0
+                'win_rate': 0.0,
+                'avg_profit': 0.0,
+                'total_profit': 0.0,
+                'profit_factor': 0.0,
+                'active_trades': len(self.active_trades)
             }
         
-        wins = [t for t in self.trades if t > 0]
-        losses = [t for t in self.trades if t < 0]
+        win_rate = (self.performance['winning_trades'] / self.performance['total_trades']) * 100
+        avg_profit = self.performance['total_profit'] / self.performance['total_trades']
         
-        win_rate = (len(wins) / len(self.trades)) * 100 if self.trades else 0
-        avg_win = np.mean(wins) if wins else 0
-        avg_loss = abs(np.mean(losses)) if losses else 0
+        # Calcular profit factor (lucro total / prejuízo total)
+        winning_trades = [t for t in self.trade_history if t['final_profit_percent'] > 0]
+        losing_trades = [t for t in self.trade_history if t['final_profit_percent'] < 0]
         
-        total_profit = sum(wins)
-        total_loss = abs(sum(losses))
-        profit_factor = total_profit / total_loss if total_loss > 0 else 999
+        total_wins = sum(t['final_profit_value'] for t in winning_trades)
+        total_losses = abs(sum(t['final_profit_value'] for t in losing_trades))
         
-        # Sharpe ratio simplificado
-        returns = np.array(self.trades) / self.initial_balance
-        sharpe_ratio = np.mean(returns) / np.std(returns) * np.sqrt(365) if len(returns) > 1 and np.std(returns) > 0 else 0
+        profit_factor = total_wins / total_losses if total_losses > 0 else float('inf')
         
         return {
             'win_rate': round(win_rate, 2),
-            'avg_win': round(avg_win, 2),
-            'avg_loss': round(avg_loss, 2),
+            'avg_profit': round(avg_profit, 2),
+            'total_profit': round(self.performance['total_profit'], 2),
             'profit_factor': round(profit_factor, 2),
-            'sharpe_ratio': round(sharpe_ratio, 2),
-            'max_drawdown': round(self.max_drawdown, 2),
-            'total_trades': len(self.trades),
-            'net_profit': round(sum(self.trades), 2),
-            'balance': round(self.balance, 2)
+            'active_trades': len(self.active_trades),
+            'total_trades': self.performance['total_trades']
         }
 
 # ==========================================================
-# SISTEMA DE BACKTESTING
+# SISTEMA DE DECISÃO AUTOMÁTICA
 # ==========================================================
-class Backtester:
-    """Sistema de backtesting para validação de estratégias"""
+class AutoDecisionEngine:
+    """Motor de decisão automática para entrada/saída"""
     
-    @staticmethod
-    def simulate_strategy(token_data: Dict, strategy: str = "NEURAL_NET") -> Dict:
-        """Simula performance da estratégia"""
+    def __init__(self):
+        self.min_confidence = 0.7  # 70% de confiança mínima
+        self.max_position_percent = 15  # Máximo 15% por trade
+        self.risk_reward_ratio = 2.0  # 1:2 mínimo
+    
+    def analyze_entry_signal(self, token_data: Dict, current_price: float) -> Dict:
+        """Analisa se deve entrar no trade"""
         
-        try:
-            # Dados históricos simulados
-            current_price = float(token_data['pairs'][0]['priceUsd'])
+        # Simulação de análise IA
+        analysis_score = self._calculate_analysis_score(token_data)
+        
+        if analysis_score >= self.min_confidence:
+            # Calcular parâmetros do trade
+            stop_loss = current_price * 0.90  # -10%
+            take_profit = current_price * 1.20  # +20%
             
-            # Gerar dados históricos
-            np.random.seed(int(current_price * 10000))
-            historical_prices = []
-            price = current_price
-            
-            for _ in range(100):
-                change = np.random.uniform(-0.05, 0.05)
-                price *= (1 + change)
-                historical_prices.append(price)
-            
-            # Simular trades baseado na estratégia
-            trades = []
-            balance = 1000
-            position = 0
-            
-            for i in range(20, len(historical_prices)):
-                price = historical_prices[i]
-                
-                # Sinal de entrada (simulado)
-                if strategy == "NEURAL_NET":
-                    # Estratégia neural
-                    if i % 7 == 0:  # Entrada periódica
-                        position_size = min(balance * 0.1, 100)
-                        entry_price = price
-                        position = position_size / entry_price
-                        balance -= position_size
-                        
-                        # Saída após 5 períodos
-                        if i + 5 < len(historical_prices):
-                            exit_price = historical_prices[i + 5]
-                            profit = position * (exit_price - entry_price)
-                            balance += position * exit_price
-                            trades.append(profit)
-                            position = 0
-            
-            # Calcular métricas
-            if trades:
-                win_rate = (sum(1 for t in trades if t > 0) / len(trades)) * 100
-                total_profit = sum(trades)
-                max_dd = Backtester.calculate_max_drawdown(trades)
-            else:
-                win_rate = 0
-                total_profit = 0
-                max_dd = 0
+            # Calcular tamanho da posição baseado no score
+            position_percent = min(
+                self.max_position_percent,
+                analysis_score * self.max_position_percent
+            )
             
             return {
-                'simulated_win_rate': round(win_rate, 2),
-                'simulated_profit': round(total_profit, 2),
-                'simulated_trades': len(trades),
-                'simulated_max_dd': round(max_dd, 2),
-                'strategy_score': min(100, max(0, win_rate * 1.5))
+                'should_enter': True,
+                'confidence': analysis_score,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'position_percent': position_percent,
+                'risk_reward': (take_profit - current_price) / (current_price - stop_loss)
             }
+        
+        return {'should_enter': False, 'confidence': analysis_score}
+    
+    def _calculate_analysis_score(self, token_data: Dict) -> float:
+        """Calcula score de análise (simulação)"""
+        try:
+            # Fatores de análise
+            factors = []
+            
+            # 1. Volume
+            volume = float(token_data.get('pairs', [{}])[0].get('volume', {}).get('h24', 0))
+            if volume > 100000:
+                factors.append(0.8)
+            elif volume > 50000:
+                factors.append(0.6)
+            elif volume > 10000:
+                factors.append(0.4)
+            else:
+                factors.append(0.2)
+            
+            # 2. Liquidez
+            liquidity = float(token_data.get('pairs', [{}])[0].get('liquidity', {}).get('usd', 0))
+            if liquidity > 50000:
+                factors.append(0.9)
+            elif liquidity > 20000:
+                factors.append(0.7)
+            elif liquidity > 5000:
+                factors.append(0.5)
+            else:
+                factors.append(0.3)
+            
+            # 3. Variação recente
+            price_change = float(token_data.get('pairs', [{}])[0].get('priceChange', {}).get('h24', 0))
+            if 5 < price_change < 30:  # Crescimento saudável
+                factors.append(0.8)
+            elif price_change > 0:
+                factors.append(0.6)
+            else:
+                factors.append(0.4)
+            
+            # 4. Relação compra/venda
+            txns = token_data.get('pairs', [{}])[0].get('txns', {}).get('h24', {})
+            buys = txns.get('buys', 1)
+            sells = txns.get('sells', 1)
+            buy_ratio = buys / (buys + sells)
+            
+            if buy_ratio > 0.6:
+                factors.append(0.9)
+            elif buy_ratio > 0.5:
+                factors.append(0.7)
+            else:
+                factors.append(0.4)
+            
+            # Score médio
+            return round(np.mean(factors), 2)
             
         except:
-            return {
-                'simulated_win_rate': 0,
-                'simulated_profit': 0,
-                'simulated_trades': 0,
-                'simulated_max_dd': 0,
-                'strategy_score': 0
-            }
-    
-    @staticmethod
-    def calculate_max_drawdown(returns: List[float]) -> float:
-        """Calcula máximo drawdown"""
-        if not returns:
-            return 0
-        
-        cumulative = np.cumsum(returns)
-        running_max = np.maximum.accumulate(cumulative)
-        drawdown = (cumulative - running_max) / running_max
-        
-        return abs(min(drawdown)) * 100 if len(drawdown) > 0 else 0
+            return 0.0
 
 # ==========================================================
 # INICIALIZAÇÃO DO STREAMLIT
 # ==========================================================
-# Inicializar todos os sistemas
-if 'neural_ai' not in st.session_state:
-    st.session_state.neural_ai = NeuralNetworkAI()
+# Inicializar sistemas
+if 'trade_monitor' not in st.session_state:
+    st.session_state.trade_monitor = AutoTradeMonitor()
 
-if 'tech_analyzer' not in st.session_state:
-    st.session_state.tech_analyzer = TechnicalAnalyzer()
+if 'decision_engine' not in st.session_state:
+    st.session_state.decision_engine = AutoDecisionEngine()
 
-if 'sentiment_analyzer' not in st.session_state:
-    st.session_state.sentiment_analyzer = SentimentAnalyzer()
+if 'auto_trading' not in st.session_state:
+    st.session_state.auto_trading = False
 
-if 'risk_manager' not in st.session_state:
-    st.session_state.risk_manager = SmartRiskManager(initial_balance=1000.0)
+if 'balance' not in st.session_state:
+    st.session_state.balance = 1000.0
 
-if 'backtester' not in st.session_state:
-    st.session_state.backtester = Backtester()
-
-# Estado do aplicativo
-if 'bot_active' not in st.session_state:
-    st.session_state.bot_active = False
-
-if 'current_trade' not in st.session_state:
-    st.session_state.current_trade = None
-
-if 'trade_history' not in st.session_state:
-    st.session_state.trade_history = []
-
-if 'selected_token' not in st.session_state:
-    st.session_state.selected_token = None
+if 'token_watchlist' not in st.session_state:
+    st.session_state.token_watchlist = []
 
 # ==========================================================
 # FUNÇÕES AUXILIARES
 # ==========================================================
 def fetch_token_data(ca: str) -> Optional[Dict]:
-    """Busca dados completos do token"""
+    """Busca dados do token"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            return response.json()
-    except Exception as e:
-        st.error(f"Erro ao buscar token: {e}")
+            data = response.json()
+            # Adicionar CA aos dados
+            if data.get('pairs'):
+                data['ca'] = ca
+                data['symbol'] = data['pairs'][0].get('baseToken', {}).get('symbol', 'TOKEN')
+            return data
+    except:
+        pass
     return None
 
-def get_token_symbol(ca: str) -> str:
-    """Busca símbolo do token"""
-    try:
-        data = fetch_token_data(ca)
-        if data and data.get('pairs'):
-            return data['pairs'][0].get('baseToken', {}).get('symbol', 'TOKEN')
-    except:
-        pass
-    return "TOKEN"
-
-def get_price_history(ca: str, hours: int = 24) -> List[float]:
-    """Simula histórico de preços"""
-    try:
-        data = fetch_token_data(ca)
-        if data:
-            current_price = float(data['pairs'][0]['priceUsd'])
-            # Gerar histórico simulado
-            np.random.seed(int(ca[:8], 16) if ca[:8].isalnum() else 42)
-            return [current_price * (1 + np.random.uniform(-0.1, 0.1)) for _ in range(hours)]
-    except:
-        pass
-    return []
-
-def format_number(value: float) -> str:
-    """Formata número para exibição"""
-    if value >= 1_000_000:
-        return f"${value/1_000_000:.2f}M"
-    elif value >= 1_000:
-        return f"${value/1_000:.2f}K"
-    else:
-        return f"${value:.2f}"
+def get_current_price(ca: str) -> Optional[float]:
+    """Busca preço atual"""
+    data = fetch_token_data(ca)
+    if data and data.get('pairs'):
+        return float(data['pairs'][0].get('priceUsd', 0))
+    return None
 
 # ==========================================================
 # INTERFACE PRINCIPAL
 # ==========================================================
-st.title("🧠 SNIPER PRO AI v2.0")
-st.markdown("### Sistema de Trading Inteligente com Meta de 75%+ de Acerto")
+st.title("🤖 SNIPER PRO AI - AUTO TRADER")
+st.markdown("### Sistema Automático com Saída Inteligente")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ CONTROLES")
     
     # Status do sistema
-    metrics = st.session_state.risk_manager.get_performance_metrics()
+    stats = st.session_state.trade_monitor.get_performance_stats()
     
-    st.metric("💰 SALDO", f"${metrics['balance']:,.2f}")
-    st.metric("🎯 WIN RATE", f"{metrics['win_rate']:.1f}%")
-    st.metric("📊 LUCRO TOTAL", f"${metrics['net_profit']:+,.2f}")
+    st.metric("💰 SALDO", f"${st.session_state.balance:,.2f}")
+    st.metric("🎯 WIN RATE", f"{stats['win_rate']:.1f}%")
+    st.metric("📊 LUCRO TOTAL", f"${stats['total_profit']:+,.2f}")
     
     st.divider()
     
-    # Controles
-    if st.button("🔄 ATUALIZAR TUDO", use_container_width=True):
-        st.rerun()
+    # Controles de auto trading
+    st.subheader("🤖 AUTO TRADING")
     
-    if st.button("🤖 TREINAR IA", use_container_width=True):
-        st.info("IA em treinamento contínuo...")
-    
-    if st.button("📊 BACKTEST", use_container_width=True):
-        st.session_state.show_backtest = True
-    
-    if st.button("⚡ OTIMIZAR ESTRATÉGIA", use_container_width=True):
-        st.success("Estratégia otimizada!")
+    auto_mode = st.toggle("MODO AUTOMÁTICO", value=st.session_state.auto_trading)
+    if auto_mode != st.session_state.auto_trading:
+        st.session_state.auto_trading = auto_mode
+        if auto_mode:
+            st.success("Auto trading ATIVADO!")
+        else:
+            st.warning("Auto trading DESATIVADO!")
     
     st.divider()
     
     # Configurações
     st.subheader("⚙️ CONFIGURAÇÕES")
     
-    st.slider("🎯 Meta Win Rate (%)", 50, 90, 75, key="target_win_rate")
-    st.slider("⚠️ Stop Loss Máx (%)", 1, 20, 8, key="max_stop_loss")
-    st.slider("💰 Posição Máx (%)", 1, 30, 15, key="max_position")
+    st.number_input("💰 SALDO INICIAL", value=1000.0, min_value=100.0, step=100.0, 
+                   key="initial_balance")
+    
+    st.slider("🎯 CONFIANÇA MÍNIMA (%)", 50, 95, 70, key="min_confidence")
+    st.slider("⚠️ STOP LOSS (%)", 5, 20, 10, key="stop_loss_percent")
+    st.slider("🚀 TAKE PROFIT (%)", 10, 50, 20, key="take_profit_percent")
+    st.slider("💰 POSIÇÃO MÁX (%)", 5, 30, 15, key="max_position_percent")
     
     st.divider()
     
-    # Exportar dados
-    if st.button("📥 EXPORTAR DADOS", use_container_width=True):
-        if st.session_state.trade_history:
-            df = pd.DataFrame(st.session_state.trade_history)
+    # Ações
+    if st.button("🔄 ATUALIZAR TUDO"):
+        st.rerun()
+    
+    if st.button("📊 EXPORTAR DADOS"):
+        if st.session_state.trade_monitor.trade_history:
+            df = pd.DataFrame(st.session_state.trade_monitor.trade_history)
             csv = df.to_csv(index=False)
             st.download_button(
                 label="⬇️ BAIXAR CSV",
                 data=csv,
-                file_name=f"trades_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name="trades_auto.csv",
                 mime="text/csv",
                 use_container_width=True
             )
+    
+    if st.button("🧹 LIMPAR HISTÓRICO"):
+        st.session_state.trade_monitor.trade_history = []
+        st.session_state.trade_monitor.active_trades = []
+        st.session_state.trade_monitor.performance = {
+            'total_trades': 0,
+            'winning_trades': 0,
+            'total_profit': 0.0,
+            'max_profit': 0.0,
+            'max_loss': 0.0
+        }
+        st.success("Histórico limpo!")
+        st.rerun()
 
 # ==========================================================
-# ÁREA DE ANÁLISE DE TOKEN
+# SEÇÃO DE MONITORAMENTO DE TOKENS
 # ==========================================================
-st.header("🔍 ANÁLISE DE TOKEN COM IA")
+st.header("🔍 MONITORAR TOKENS")
 
-col_input1, col_input2 = st.columns([3, 1])
+col_watch1, col_watch2 = st.columns([3, 1])
 
-with col_input1:
-    token_ca = st.text_input(
-        "📝 CONTRACT ADDRESS:",
+with col_watch1:
+    new_token_ca = st.text_input(
+        "Adicionar token à watchlist:",
         placeholder="Cole o CA do token...",
-        key="token_ca_input"
+        key="new_token_input"
     )
 
-with col_input2:
-    analysis_type = st.selectbox(
-        "TIPO DE ANÁLISE:",
-        ["COMPLETA", "TÉCNICA", "SENTIMENTO", "RISCO"]
-    )
-
-if token_ca and len(token_ca) > 20:
-    with st.spinner("🤖 IA analisando token..."):
-        # Buscar dados
-        token_data = fetch_token_data(token_ca.strip())
-        
-        if token_data:
-            # Obter símbolo
-            token_symbol = get_token_symbol(token_ca.strip())
-            st.session_state.selected_token = {
-                'ca': token_ca.strip(),
-                'symbol': token_symbol,
-                'data': token_data
+with col_watch2:
+    if st.button("➕ ADICIONAR", use_container_width=True) and new_token_ca:
+        data = fetch_token_data(new_token_ca.strip())
+        if data:
+            token_info = {
+                'ca': new_token_ca.strip(),
+                'symbol': data.get('symbol', 'TOKEN'),
+                'last_price': float(data['pairs'][0].get('priceUsd', 0)),
+                'last_update': datetime.now()
             }
-            
-            # Análise Neural
-            neural_analysis = st.session_state.neural_ai.predict_trend(token_data)
-            
-            # Análise Técnica
-            price_history = get_price_history(token_ca.strip())
-            if price_history:
-                rsi = st.session_state.tech_analyzer.calculate_rsi(price_history)
-                macd = st.session_state.tech_analyzer.calculate_macd(price_history)
-                bollinger = st.session_state.tech_analyzer.calculate_bollinger_bands(price_history)
-                support_resistance = st.session_state.tech_analyzer.calculate_support_resistance(price_history)
+            # Verificar se já existe
+            if not any(t['ca'] == token_info['ca'] for t in st.session_state.token_watchlist):
+                st.session_state.token_watchlist.append(token_info)
+                st.success(f"Token {token_info['symbol']} adicionado!")
+                st.rerun()
             else:
-                rsi = 50
-                macd = {'signal_text': 'NEUTRO'}
-                bollinger = {'position': 'NEUTRO'}
-                support_resistance = {'distance_to_support': 0, 'distance_to_resistance': 0}
-            
-            # Análise de Sentimento
-            sentiment = st.session_state.sentiment_analyzer.analyze_social_sentiment(token_symbol)
-            onchain = st.session_state.sentiment_analyzer.analyze_onchain_metrics(token_ca.strip())
-            
-            # Backtesting
-            backtest_results = st.session_state.backtester.simulate_strategy(token_data)
-            
-            # Gestão de Risco
-            position_info = st.session_state.risk_manager.calculate_position_size(
-                neural_analysis['score'],
-                neural_analysis['confidence'],
-                st.session_state.risk_manager.balance
+                st.warning("Token já está na watchlist")
+        else:
+            st.error("Token não encontrado")
+
+# Mostrar watchlist
+if st.session_state.token_watchlist:
+    st.subheader("📊 TOKENS MONITORADOS")
+    
+    # Atualizar preços
+    for token in st.session_state.token_watchlist:
+        current_price = get_current_price(token['ca'])
+        if current_price:
+            token['last_price'] = current_price
+            token['last_update'] = datetime.now()
+    
+    # Mostrar em colunas
+    cols = st.columns(min(5, len(st.session_state.token_watchlist)))
+    
+    for idx, token in enumerate(st.session_state.token_watchlist[:5]):
+        with cols[idx % 5]:
+            with st.container(border=True):
+                st.markdown(f"**{token['symbol']}**")
+                st.markdown(f"`${token['last_price']:.10f}`")
+                st.caption(f"Última: {token['last_update'].strftime('%H:%M:%S')}")
+                
+                # Botão para análise rápida
+                if st.button("🧠 ANALISAR", key=f"analyze_{token['ca']}", use_container_width=True):
+                    st.session_state.selected_token_ca = token['ca']
+                    st.rerun()
+
+# ==========================================================
+# SEÇÃO DE ANÁLISE E ENTRADA
+# ==========================================================
+if 'selected_token_ca' in st.session_state and st.session_state.selected_token_ca:
+    st.header("🎯 ANÁLISE DE ENTRADA")
+    
+    token_data = fetch_token_data(st.session_state.selected_token_ca)
+    
+    if token_data:
+        current_price = float(token_data['pairs'][0].get('priceUsd', 0))
+        
+        col_analysis1, col_analysis2 = st.columns([2, 1])
+        
+        with col_analysis1:
+            # Análise automática
+            analysis = st.session_state.decision_engine.analyze_entry_signal(
+                token_data, current_price
             )
             
-            # ==========================================================
-            # EXIBIR RESULTADOS DA ANÁLISE
-            # ==========================================================
+            st.metric("💰 PREÇO ATUAL", f"${current_price:.10f}")
+            st.metric("🎯 CONFIANÇA", f"{analysis['confidence']*100:.1f}%")
             
-            # Score Principal
-            col_score1, col_score2, col_score3, col_score4 = st.columns(4)
-            
-            with col_score1:
-                score_color = "green" if neural_analysis['score'] >= 70 else "orange" if neural_analysis['score'] >= 50 else "red"
-                st.markdown(f"""
-                <div style='text-align: center; padding: 15px; border-radius: 10px; background-color: #f8f9fa;'>
-                    <h1 style='color: {score_color}; font-size: 48px; margin: 0;'>{neural_analysis['score']}</h1>
-                    <p style='font-size: 14px; margin: 0;'>SCORE IA</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col_score2:
-                st.metric("📈 TENDÊNCIA", neural_analysis['trend'])
-            
-            with col_score3:
-                st.metric("🎯 AÇÃO", neural_analysis['action'])
-            
-            with col_score4:
-                st.metric("💎 CONFIANÇA", f"{neural_analysis['confidence']*100:.1f}%")
-            
-            st.divider()
-            
-            # Tabs de análise detalhada
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "📊 TÉCNICA", 
-                "😊 SENTIMENTO", 
-                "⚖️ RISCO", 
-                "📈 BACKTEST", 
-                "🚀 ESTRATÉGIA"
-            ])
-            
-            with tab1:
-                col_tech1, col_tech2, col_tech3 = st.columns(3)
+            if analysis['should_enter']:
+                st.success("✅ SINAL DE COMPRA DETECTADO!")
                 
-                with col_tech1:
-                    st.metric("📉 RSI", f"{rsi:.1f}")
-                    st.metric("📊 MACD", macd['signal_text'])
+                # Mostrar parâmetros sugeridos
+                st.info(f"""
+                **Parâmetros Sugeridos:**
+                • Stop Loss: ${analysis['stop_loss']:.10f} (-10%)
+                • Take Profit: ${analysis['take_profit']:.10f} (+20%)
+                • Tamanho Posição: {analysis['position_percent']:.1f}% do saldo
+                • Risk/Reward: 1:{analysis['risk_reward']:.1f}
+                """)
                 
-                with col_tech2:
-                    st.metric("📈 BOLLINGER", bollinger['position'])
-                    st.metric("🎯 SUPORTE", f"{support_resistance['distance_to_support']}%")
+                # Calcular valores
+                position_value = st.session_state.balance * (analysis['position_percent'] / 100)
                 
-                with col_tech3:
-                    st.metric("🚀 RESISTÊNCIA", f"{support_resistance['distance_to_resistance']}%")
-                    st.metric("📏 LARGURA BB", f"{bollinger['width']:.4f}")
-            
-            with tab2:
-                col_sent1, col_sent2 = st.columns(2)
-                
-                with col_sent1:
-                    st.metric("😊 SENTIMENTO", sentiment['trend'])
-                    st.metric("🐦 TWITTER", f"{sentiment['twitter_sentiment']*100:.1f}%")
-                    st.metric("📱 TELEGRAM", sentiment['telegram_activity'])
-                
-                with col_sent2:
-                    st.metric("🐋 WHALE ACTIVITY", onchain['whale_activity'])
-                    st.metric("🔄 TRANSAÇÕES", onchain['large_transactions'])
-                    st.metric("👥 CONCENTRAÇÃO", f"{onchain['token_concentration']*100:.1f}%")
-            
-            with tab3:
-                col_risk1, col_risk2 = st.columns(2)
-                
-                with col_risk1:
-                    st.metric("⚠️ NÍVEL RISCO", position_info['risk_level'])
-                    st.metric("💰 TAMANHO POSIÇÃO", f"{position_info['position_percent']}%")
-                    st.metric("📉 STOP LOSS", f"{position_info['stop_loss_percent']}%")
-                
-                with col_risk2:
-                    st.metric("💸 VALOR POSIÇÃO", f"${position_info['position_size']:,.2f}")
-                    st.metric("💥 PERDA MÁX", f"${position_info['max_loss']:,.2f}")
+                # Botão de entrada manual
+                if st.button("🚀 ENTRAR COM PARÂMETROS SUGERIDOS", type="primary", use_container_width=True):
+                    # Criar trade
+                    trade = st.session_state.trade_monitor.create_trade(
+                        token_data=token_data,
+                        position_size=position_value,
+                        entry_price=current_price,
+                        stop_loss=analysis['stop_loss'],
+                        take_profit=analysis['take_profit']
+                    )
                     
-                    # Verificar se pode trade
-                    can_trade, reason = st.session_state.risk_manager.can_trade(neural_analysis['score'])
-                    if can_trade:
-                        st.success("✅ PODE TRADAR")
-                    else:
-                        st.error(f"❌ NÃO PODE TRADAR: {reason}")
+                    st.session_state.balance -= position_value
+                    st.success(f"Trade iniciado para {token_data['symbol']}!")
+                    st.rerun()
             
-            with tab4:
-                col_back1, col_back2 = st.columns(2)
-                
-                with col_back1:
-                    st.metric("🎯 WIN RATE SIMULADO", f"{backtest_results['simulated_win_rate']}%")
-                    st.metric("💰 LUCRO SIMULADO", f"${backtest_results['simulated_profit']:,.2f}")
-                
-                with col_back2:
-                    st.metric("📊 TRADES SIMULADOS", backtest_results['simulated_trades'])
-                    st.metric("📉 MAX DD SIMULADO", f"{backtest_results['simulated_max_dd']}%")
-                
-                # Score da estratégia
-                strategy_score = backtest_results['strategy_score']
-                st.progress(strategy_score/100, text=f"SCORE DA ESTRATÉGIA: {strategy_score}/100")
+            else:
+                st.warning(f"⚠️ NÃO ENTRAR - Confiança muito baixa ({analysis['confidence']*100:.1f}%)")
+        
+        with col_analysis2:
+            # Entrada manual
+            st.subheader("🎮 ENTRADA MANUAL")
             
-            with tab5:
-                # Estratégia de entrada/saída
-                current_price = float(token_data['pairs'][0]['priceUsd'])
-                
-                entry_point = st.session_state.neural_ai.calculate_entry_point(
-                    current_price, 
-                    neural_analysis['trend']
+            position_percent = st.slider("Tamanho da posição (%):", 1.0, 30.0, 10.0, 1.0)
+            stop_loss_percent = st.slider("Stop Loss (%):", 5.0, 30.0, 10.0, 1.0)
+            take_profit_percent = st.slider("Take Profit (%):", 10.0, 100.0, 20.0, 5.0)
+            
+            position_value = st.session_state.balance * (position_percent / 100)
+            stop_loss_price = current_price * (1 - stop_loss_percent/100)
+            take_profit_price = current_price * (1 + take_profit_percent/100)
+            
+            st.metric("💰 VALOR POSIÇÃO", f"${position_value:,.2f}")
+            st.metric("⚠️ STOP LOSS", f"${stop_loss_price:.10f}")
+            st.metric("🚀 TAKE PROFIT", f"${take_profit_price:.10f}")
+            
+            if st.button("🎯 ENTRAR MANUALMENTE", use_container_width=True):
+                trade = st.session_state.trade_monitor.create_trade(
+                    token_data=token_data,
+                    position_size=position_value,
+                    entry_price=current_price,
+                    stop_loss=stop_loss_price,
+                    take_profit=take_profit_price
                 )
                 
-                exit_strategy = st.session_state.neural_ai.calculate_exit_strategy(
-                    entry_point,
-                    neural_analysis['trend']
-                )
-                
-                col_strat1, col_strat2 = st.columns(2)
-                
-                with col_strat1:
-                    st.metric("💰 PREÇO ATUAL", f"${current_price:.10f}")
-                    st.metric("🎯 PONTO ENTRADA", f"${entry_point:.10f}")
-                    st.metric("📉 STOP LOSS", f"${exit_strategy['stop_loss']:.10f}")
-                
-                with col_strat2:
-                    st.metric("🚀 TAKE PROFIT 1", f"${exit_strategy['take_profit_1']:.10f}")
-                    st.metric("💎 TAKE PROFIT 2", f"${exit_strategy['take_profit_2']:.10f}")
-                    st.metric("📊 TRAILING STOP", f"{exit_strategy['trailing_stop']*100:.1f}%")
-            
-            # Botão de ação
-            st.divider()
-            
-            col_action1, col_action2, col_action3 = st.columns([2, 1, 1])
-            
-            with col_action1:
-                if neural_analysis['action'] in ['COMPRAR', 'COMPRAR_AGRESIVO']:
-                    st.success(f"🎯 RECOMENDAÇÃO DA IA: {neural_analysis['action']}")
-                else:
-                    st.warning(f"⚠️ RECOMENDAÇÃO DA IA: {neural_analysis['action']}")
-            
-            with col_action2:
-                if st.button("🚀 INICIAR TRADE IA", type="primary", use_container_width=True):
-                    if st.session_state.risk_manager.can_trade(neural_analysis['score'])[0]:
-                        st.session_state.current_trade = {
-                            'token': token_symbol,
-                            'ca': token_ca.strip(),
-                            'entry_price': current_price,
-                            'position_size': position_info['position_size'],
-                            'analysis': neural_analysis,
-                            'stop_loss': exit_strategy['stop_loss'],
-                            'take_profit_1': exit_strategy['take_profit_1'],
-                            'take_profit_2': exit_strategy['take_profit_2'],
-                            'trailing_stop': exit_strategy['trailing_stop'],
-                            'timestamp': datetime.now()
-                        }
-                        st.session_state.bot_active = True
-                        st.success("✅ Trade iniciado com IA!")
-                        st.rerun()
-                    else:
-                        st.error("Não é possível iniciar trade (verifique gestão de risco)")
-            
-            with col_action3:
-                if st.button("📊 VER GRAFICOS", use_container_width=True):
-                    st.session_state.show_charts = True
+                st.session_state.balance -= position_value
+                st.success(f"Trade manual iniciado para {token_data['symbol']}!")
+                st.rerun()
 
 # ==========================================================
-# TRADE ATIVO
+# SEÇÃO DE TRADES ATIVOS
 # ==========================================================
-if st.session_state.bot_active and st.session_state.current_trade:
-    st.header("📈 TRADE ATIVO COM IA")
+st.header("📈 TRADES ATIVOS")
+
+# Atualizar preços e verificar saídas
+if st.session_state.trade_monitor.active_trades:
+    # Atualizar todos os preços
+    for trade in st.session_state.trade_monitor.active_trades:
+        current_price = get_current_price(trade['ca'])
+        if current_price:
+            st.session_state.trade_monitor.update_trade_prices(trade['ca'], current_price)
     
-    trade = st.session_state.current_trade
+    # Executar saídas automáticas
+    closed_trades = st.session_state.trade_monitor.execute_auto_exit()
     
-    # Buscar preço atual
-    token_data = fetch_token_data(trade['ca'])
-    if token_data:
-        current_price = float(token_data['pairs'][0]['priceUsd'])
+    # Mostrar trades fechados recentemente
+    if closed_trades:
+        st.subheader("🔒 TRADES FECHADOS RECENTEMENTE")
+        for trade in closed_trades[-3:]:  # Mostrar últimos 3
+            profit_color = "green" if trade['final_profit_percent'] > 0 else "red"
+            
+            st.markdown(f"""
+            <div style='border: 2px solid {profit_color}; border-radius: 10px; padding: 10px; margin: 10px 0;'>
+                <strong>{trade['symbol']}</strong> - {trade['exit_reason']}<br>
+                Entrada: ${trade['entry_price']:.10f} | Saída: ${trade['exit_price']:.10f}<br>
+                <span style='color:{profit_color}; font-weight:bold;'>
+                    Resultado: {trade['final_profit_percent']:+.2f}% (${trade['final_profit_value']:+.2f})
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Adicionar ao saldo
+            st.session_state.balance += trade['position_size'] + trade['final_profit_value']
+    
+    # Mostrar trades ativos
+    st.subheader("🟢 TRADES EM ANDAMENTO")
+    
+    cols = st.columns(3)
+    
+    for idx, trade in enumerate(st.session_state.trade_monitor.active_trades[:6]):  # Mostrar até 6
+        with cols[idx % 3]:
+            with st.container(border=True, height=250):
+                # Status
+                profit_percent = trade['current_profit_percent']
+                profit_color = "green" if profit_percent >= 0 else "red"
+                
+                st.markdown(f"**{trade['symbol']}** (ID: {trade['id']})")
+                st.markdown(f"<span style='color:{profit_color}; font-size:24px; font-weight:bold;'>{profit_percent:+.2f}%</span>", 
+                          unsafe_allow_html=True)
+                
+                # Informações
+                st.caption(f"Entrada: ${trade['entry_price']:.10f}")
+                st.caption(f"Atual: ${trade['current_price']:.10f}")
+                
+                # Stop Loss e Take Profit
+                st.caption(f"⛔ Stop: ${trade['stop_loss']:.10f}")
+                st.caption(f"🎯 Take Profit: ${trade['take_profit']:.10f}")
+                
+                if trade['trailing_stop_activated']:
+                    st.caption(f"📊 Trailing Stop: ${trade['trailing_stop_price']:.10f}")
+                
+                # Máximo atingido
+                if trade['max_profit_percent'] > 0:
+                    st.caption(f"📈 Máximo: {trade['max_profit_percent']:+.2f}%")
+                
+                # Botão de saída manual
+                if st.button("⏹️ SAIR MANUAL", key=f"exit_{trade['id']}", use_container_width=True):
+                    # Fechar trade manualmente
+                    current_price = get_current_price(trade['ca'])
+                    if current_price:
+                        profit_percent = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+                        profit_value = trade['position_size'] * (profit_percent / 100)
+                        
+                        trade['status'] = 'CLOSED'
+                        trade['exit_price'] = current_price
+                        trade['exit_time'] = datetime.now()
+                        trade['exit_reason'] = 'MANUAL_EXIT'
+                        trade['final_profit_percent'] = profit_percent
+                        trade['final_profit_value'] = profit_value
+                        
+                        st.session_state.trade_monitor.trade_history.append(trade.copy())
+                        st.session_state.trade_monitor.active_trades.remove(trade)
+                        
+                        st.session_state.balance += trade['position_size'] + profit_value
+                        st.success(f"Trade fechado manualmente: {profit_percent:+.2f}%")
+                        st.rerun()
+else:
+    st.info("Nenhum trade ativo no momento.")
+
+# ==========================================================
+# SEÇÃO DE HISTÓRICO E ESTATÍSTICAS
+# ==========================================================
+st.header("📊 HISTÓRICO E ESTATÍSTICAS")
+
+col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
+
+with col_stats1:
+    stats = st.session_state.trade_monitor.get_performance_stats()
+    st.metric("🎯 WIN RATE", f"{stats['win_rate']:.1f}%")
+
+with col_stats2:
+    st.metric("💰 LUCRO TOTAL", f"${stats['total_profit']:+,.2f}")
+
+with col_stats3:
+    st.metric("📊 TRADES", stats['total_trades'])
+
+with col_stats4:
+    st.metric("📈 FACTOR", f"{stats['profit_factor']:.2f}")
+
+# Gráfico de performance
+if st.session_state.trade_monitor.trade_history:
+    df_history = pd.DataFrame(st.session_state.trade_monitor.trade_history)
+    
+    # Gráfico de lucro acumulado
+    if not df_history.empty:
+        df_history['cumulative_profit'] = df_history['final_profit_value'].cumsum()
         
-        # Calcular PnL
-        pnl_percentage = ((current_price / trade['entry_price']) - 1) * 100
-        pnl_value = trade['position_size'] * (pnl_percentage / 100)
-        
-        # Informações do trade
-        col_trade1, col_trade2, col_trade3, col_trade4 = st.columns(4)
-        
-        with col_trade1:
-            st.metric("💰 TOKEN", trade['token'])
-            st.metric("🎯 ENTRADA", f"${trade['entry_price']:.10f}")
-        
-        with col_trade2:
-            st.metric("📈 PREÇO ATUAL", f"${current_price:.10f}")
-            st.metric("📊 POSIÇÃO", f"${trade['position_size']:,.2f}")
-        
-        with col_trade3:
-            st.metric("📉 PnL %", f"{pnl_percentage:+.2f}%")
-            st.metric("💰 PnL $", f"${pnl_value:+.2f}")
-        
-        with col_trade4:
-            st.metric("⚠️ STOP LOSS", f"${trade['stop_loss']:.10f}")
-            st.metric("🚀 TP 1", f"${trade['take_profit_1']:.10f}")
-        
-        # Gráfico de performance
         fig = go.Figure()
-        
-        # Linha de preço
         fig.add_trace(go.Scatter(
-            y=[trade['entry_price'], current_price],
-            x=['Entrada', 'Atual'],
+            x=df_history.index,
+            y=df_history['cumulative_profit'],
             mode='lines+markers',
-            name='Preço',
-            line=dict(color='blue', width=3)
+            name='Lucro Acumulado',
+            line=dict(color='green', width=3)
         ))
         
-        # Linhas de stop loss e take profit
-        fig.add_hline(y=trade['stop_loss'], line_dash="dash", line_color="red", 
-                     annotation_text="Stop Loss")
-        fig.add_hline(y=trade['take_profit_1'], line_dash="dash", line_color="green",
-                     annotation_text="Take Profit 1")
-        fig.add_hline(y=trade['take_profit_2'], line_dash="dot", line_color="darkgreen",
-                     annotation_text="Take Profit 2")
-        
         fig.update_layout(
-            title=f"Performance do Trade - {trade['token']}",
-            yaxis_title="Preço (USD)",
+            title='Lucro Acumulado ao Longo do Tempo',
+            xaxis_title='Número do Trade',
+            yaxis_title='Lucro Acumulado ($)',
             height=400
         )
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # Análise em tempo real
-        if 'analysis' in trade:
-            col_analysis1, col_analysis2 = st.columns(2)
+        # Tabela de histórico
+        st.subheader("📜 ÚLTIMOS TRADES")
+        
+        recent_trades = df_history.tail(10).sort_index(ascending=False)
+        
+        for _, trade in recent_trades.iterrows():
+            profit_color = "🟢" if trade['final_profit_percent'] > 0 else "🔴"
             
-            with col_analysis1:
-                st.info(f"**AÇÃO INICIAL:** {trade['analysis']['action']}")
-                st.info(f"**CONFIANÇA:** {trade['analysis']['confidence']*100:.1f}%")
-                st.info(f"**SCORE:** {trade['analysis']['score']}/100")
+            col1, col2, col3 = st.columns([2, 2, 1])
             
-            with col_analysis2:
-                # Re-análise periódica
-                if 'last_reanalysis' not in st.session_state or time.time() - st.session_state.last_reanalysis > 30:
-                    new_analysis = st.session_state.neural_ai.predict_trend(token_data)
-                    st.session_state.last_reanalysis = time.time()
+            with col1:
+                st.text(f"{trade['symbol']} - {trade['exit_reason']}")
+            
+            with col2:
+                st.text(f"Entrada: ${trade['entry_price']:.8f}")
+                st.text(f"Saída: ${trade['exit_price']:.8f}")
+            
+            with col3:
+                st.markdown(f"**{profit_color} {trade['final_profit_percent']:+.2f}%**")
+
+# ==========================================================
+# SISTEMA DE AUTO TRADING
+# ==========================================================
+if st.session_state.auto_trading and st.session_state.token_watchlist:
+    st.header("🤖 AUTO TRADING ATIVO")
+    
+    # Processar cada token na watchlist
+    for token in st.session_state.token_watchlist:
+        # Verificar se já tem trade ativo para este token
+        active_trade_for_token = any(
+            t['ca'] == token['ca'] and t['status'] == 'ACTIVE' 
+            for t in st.session_state.trade_monitor.active_trades
+        )
+        
+        if not active_trade_for_token:
+            # Analisar entrada
+            token_data = fetch_token_data(token['ca'])
+            if token_data:
+                current_price = get_current_price(token['ca'])
+                if current_price:
+                    analysis = st.session_state.decision_engine.analyze_entry_signal(
+                        token_data, current_price
+                    )
                     
-                    if new_analysis['action'] != trade['analysis']['action']:
-                        st.warning(f"⚠️ ALTERAÇÃO NA ANÁLISE: {new_analysis['action']}")
-        
-        # Controles do trade
-        st.divider()
-        
-        col_control1, col_control2, col_control3 = st.columns(3)
-        
-        with col_control1:
-            if st.button("📈 ATUALIZAR ANÁLISE", use_container_width=True):
-                new_data = fetch_token_data(trade['ca'])
-                if new_data:
-                    new_analysis = st.session_state.neural_ai.predict_trend(new_data)
-                    st.session_state.current_trade['analysis'] = new_analysis
-                    st.success("Análise atualizada!")
-                    st.rerun()
-        
-        with col_control2:
-            if pnl_percentage <= ((trade['stop_loss'] / trade['entry_price'] - 1) * 100):
-                st.error("🚨 STOP LOSS ATINGIDO!")
-                if st.button("SAIR COM STOP LOSS", type="primary", use_container_width=True):
-                    # Fechar trade
-                    st.session_state.risk_manager.update_stats(pnl_value)
-                    st.session_state.trade_history.append({
-                        **trade,
-                        'exit_price': current_price,
-                        'pnl_percentage': pnl_percentage,
-                        'pnl_value': pnl_value,
-                        'exit_reason': 'STOP_LOSS',
-                        'exit_time': datetime.now()
-                    })
-                    st.session_state.bot_active = False
-                    st.session_state.current_trade = None
-                    st.success(f"Trade fechado: {pnl_percentage:+.2f}%")
-                    time.sleep(2)
-                    st.rerun()
-            elif pnl_percentage >= ((trade['take_profit_1'] / trade['entry_price'] - 1) * 100):
-                st.success("🎯 TAKE PROFIT 1 ATINGIDO!")
-                if st.button("SAIR COM LUCRO", type="primary", use_container_width=True):
-                    # Fechar trade
-                    st.session_state.risk_manager.update_stats(pnl_value)
-                    st.session_state.trade_history.append({
-                        **trade,
-                        'exit_price': current_price,
-                        'pnl_percentage': pnl_percentage,
-                        'pnl_value': pnl_value,
-                        'exit_reason': 'TAKE_PROFIT_1',
-                        'exit_time': datetime.now()
-                    })
-                    st.session_state.bot_active = False
-                    st.session_state.current_trade = None
-                    st.success(f"Trade fechado: {pnl_percentage:+.2f}%")
-                    time.sleep(2)
-                    st.rerun()
-        
-        with col_control3:
-            if st.button("⏹️ FECHAR TRADE MANUAL", type="secondary", use_container_width=True):
-                # Fechar trade manualmente
-                st.session_state.risk_manager.update_stats(pnl_value)
-                st.session_state.trade_history.append({
-                    **trade,
-                    'exit_price': current_price,
-                    'pnl_percentage': pnl_percentage,
-                    'pnl_value': pnl_value,
-                    'exit_reason': 'MANUAL',
-                    'exit_time': datetime.now()
-                })
-                st.session_state.bot_active = False
-                st.session_state.current_trade = None
-                st.info(f"Trade fechado manualmente: {pnl_percentage:+.2f}%")
-                st.rerun()
-        
-        # Atualização automática
-        time.sleep(5)
-        st.rerun()
+                    if analysis['should_enter']:
+                        # Calcular posição
+                        position_percent = analysis['position_percent']
+                        position_value = st.session_state.balance * (position_percent / 100)
+                        
+                        # Criar trade automaticamente
+                        if position_value > 1:  # Mínimo $1
+                            trade = st.session_state.trade_monitor.create_trade(
+                                token_data=token_data,
+                                position_size=position_value,
+                                entry_price=current_price,
+                                stop_loss=analysis['stop_loss'],
+                                take_profit=analysis['take_profit']
+                            )
+                            
+                            st.session_state.balance -= position_value
+                            st.success(f"🤖 Auto trade iniciado para {token['symbol']}!")
+    
+    st.info(f"Monitorando {len(st.session_state.token_watchlist)} tokens...")
 
 # ==========================================================
-# HISTÓRICO DE TRADES
+# ATUALIZAÇÃO AUTOMÁTICA
 # ==========================================================
-if st.session_state.trade_history:
-    st.header("📜 HISTÓRICO DE TRADES")
-    
-    df_history = pd.DataFrame(st.session_state.trade_history)
-    
-    # Métricas de performance
-    col_hist1, col_hist2, col_hist3, col_hist4 = st.columns(4)
-    
-    with col_hist1:
-        total_trades = len(df_history)
-        st.metric("📊 TOTAL TRADES", total_trades)
-    
-    with col_hist2:
-        winning_trades = len(df_history[df_history['pnl_percentage'] > 0])
-        win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
-        st.metric("🎯 WIN RATE", f"{win_rate:.1f}%")
-    
-    with col_hist3:
-        total_profit = df_history['pnl_value'].sum()
-        st.metric("💰 LUCRO TOTAL", f"${total_profit:+,.2f}")
-    
-    with col_hist4:
-        avg_profit = df_history['pnl_percentage'].mean()
-        st.metric("📈 PnL MÉDIO", f"{avg_profit:+.2f}%")
-    
-    # Gráfico de performance acumulada
-    fig_perf = go.Figure()
-    
-    fig_perf.add_trace(go.Scatter(
-        y=df_history['pnl_value'].cumsum(),
-        mode='lines+markers',
-        name='Lucro Acumulado',
-        line=dict(color='green', width=3)
-    ))
-    
-    fig_perf.update_layout(
-        title='Evolução do Lucro',
-        xaxis_title='Número do Trade',
-        yaxis_title='Lucro Acumulado ($)',
-        height=400
-    )
-    
-    st.plotly_chart(fig_perf, use_container_width=True)
-    
-    # Tabela de trades
-    st.dataframe(
-        df_history[['token', 'entry_price', 'exit_price', 'pnl_percentage', 
-                   'pnl_value', 'exit_reason', 'timestamp']],
-        use_container_width=True,
-        column_config={
-            'token': 'Token',
-            'entry_price': st.column_config.NumberColumn('Entrada', format='%.10f'),
-            'exit_price': st.column_config.NumberColumn('Saída', format='%.10f'),
-            'pnl_percentage': st.column_config.NumberColumn('PnL %', format='+.2f'),
-            'pnl_value': st.column_config.NumberColumn('PnL $', format='+.2f'),
-            'exit_reason': 'Motivo Saída',
-            'timestamp': 'Data/Hora'
-        }
-    )
-
-# ==========================================================
-# DASHBOARD DE PERFORMANCE
-# ==========================================================
-if st.session_state.trade_history and len(st.session_state.trade_history) >= 5:
-    st.header("📊 DASHBOARD DE PERFORMANCE IA")
-    
-    df_perf = pd.DataFrame(st.session_state.trade_history)
-    
-    # Análise por score da IA
-    fig_score = px.scatter(
-        df_perf,
-        x='analysis',
-        y='pnl_percentage',
-        color='pnl_percentage',
-        size=abs(df_perf['pnl_value']),
-        hover_data=['token', 'exit_reason']
-    )
-    
-    fig_score.update_layout(
-        title='Performance por Análise da IA',
-        xaxis_title='Score da IA',
-        yaxis_title='PnL (%)',
-        height=400
-    )
-    
-    st.plotly_chart(fig_score, use_container_width=True)
-    
-    # Distribuição de resultados
-    col_dist1, col_dist2 = st.columns(2)
-    
-    with col_dist1:
-        fig_dist = go.Figure()
-        
-        fig_dist.add_trace(go.Histogram(
-            x=df_perf['pnl_percentage'],
-            nbinsx=20,
-            name='Distribuição PnL',
-            marker_color='blue'
-        ))
-        
-        fig_dist.update_layout(
-            title='Distribuição de Retornos',
-            xaxis_title='PnL (%)',
-            yaxis_title='Frequência',
-            height=300
-        )
-        
-        st.plotly_chart(fig_dist, use_container_width=True)
-    
-    with col_dist2:
-        # Heatmap de correlação
-        corr_data = df_perf[['pnl_percentage', 'pnl_value', 'position_size']].corr()
-        
-        fig_corr = go.Figure(data=go.Heatmap(
-            z=corr_data.values,
-            x=corr_data.columns,
-            y=corr_data.columns,
-            colorscale='RdBu',
-            zmid=0
-        ))
-        
-        fig_corr.update_layout(
-            title='Correlação entre Métricas',
-            height=300
-        )
-        
-        st.plotly_chart(fig_corr, use_container_width=True)
+if st.session_state.auto_trading or st.session_state.trade_monitor.active_trades:
+    # Atualizar a cada 10 segundos
+    time.sleep(10)
+    st.rerun()
 
 # ==========================================================
 # FOOTER
 # ==========================================================
 st.divider()
-
 footer_col1, footer_col2, footer_col3 = st.columns(3)
 
 with footer_col1:
-    metrics = st.session_state.risk_manager.get_performance_metrics()
-    current_win_rate = metrics['win_rate']
-    target_win_rate = st.session_state.get('target_win_rate', 75)
-    
-    if current_win_rate >= target_win_rate:
-        st.success(f"🎯 Meta Atingida: {current_win_rate:.1f}% ≥ {target_win_rate}%")
-    else:
-        st.warning(f"🎯 Meta: {target_win_rate}% | Atual: {current_win_rate:.1f}%")
+    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%H:%M:%S')}")
 
 with footer_col2:
-    st.caption("🤖 IA Neural em Operação")
+    active_trades = len(st.session_state.trade_monitor.active_trades)
+    st.caption(f"📈 Trades ativos: {active_trades}")
 
 with footer_col3:
-    st.caption("Sniper Pro AI v2.0")
+    st.caption("🤖 Sniper Pro Auto Trader v1.0")
 
 # ==========================================================
-# CSS ESTILIZADO
+# CSS
 # ==========================================================
 st.markdown("""
 <style>
-    /* Estilos gerais */
+    /* Botões de ação */
     .stButton > button {
-        border-radius: 10px;
+        border-radius: 8px;
         font-weight: bold;
-        transition: all 0.3s ease;
-        border: none;
+        transition: all 0.3s;
     }
     
     .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        transform: scale(1.02);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
     
-    /* Métricas */
-    div[data-testid="stMetricValue"] {
-        font-size: 24px;
-        font-weight: bold;
-    }
-    
-    div[data-testid="stMetricDelta"] {
-        font-size: 14px;
-    }
-    
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0;
-        padding: 10px 20px;
-        font-weight: bold;
-    }
-    
-    /* Containers */
-    [data-testid="stVerticalBlock"] {
-        gap: 1rem;
+    /* Containers de trade */
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+        border-radius: 10px;
+        padding: 10px;
     }
     
     /* Alertas */
     .stAlert {
         border-radius: 10px;
-        border-left: 5px solid;
+    }
+    
+    /* Métricas */
+    div[data-testid="stMetricValue"] {
+        font-size: 24px;
     }
 </style>
 """, unsafe_allow_html=True)
-
-# ==========================================================
-# REQUIREMENTS.TXT
-# ==========================================================
-"""
-streamlit==1.28.0
-pandas==2.1.3
-numpy==1.24.3
-requests==2.31.0
-plotly==5.17.0
-"""
