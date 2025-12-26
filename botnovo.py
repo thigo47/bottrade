@@ -1,12 +1,11 @@
 import streamlit as st
-import time
 import requests
 import pandas as pd
+import time
 import os
-from streamlit_autorefresh import st_autorefresh  # <-- Novo import (precisa da lib no requirements.txt)
 
 # ==========================================================
-# 💾 INICIALIZAÇÃO SEGURA DO ESTADO
+# INICIALIZAÇÃO DO ESTADO
 # ==========================================================
 if "saldo" not in st.session_state: st.session_state.saldo = 1000.0
 if "running" not in st.session_state: st.session_state.running = False
@@ -15,13 +14,12 @@ if "ciclo" not in st.session_state: st.session_state.ciclo = 1
 if "auth" not in st.session_state: st.session_state.auth = False
 
 # ==========================================================
-# ⚙️ FUNÇÕES DE MOTOR
+# FUNÇÕES DE PREÇO
 # ==========================================================
 def fetch_price(ca):
     try:
         url = f"https://api.jup.ag/price/v2?ids={ca}"
-        response = requests.get(url, timeout=5)
-        data = response.json()
+        data = requests.get(url, timeout=5).json()
         price = data.get('data', {}).get(ca, {}).get('price')
         if price is not None:
             return float(price)
@@ -29,8 +27,8 @@ def fetch_price(ca):
         pass
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-        res = requests.get(url, timeout=5).json()
-        price = res.get('pairs', [{}])[0].get('priceUsd')
+        data = requests.get(url, timeout=5).json()
+        price = data.get('pairs', [{}])[0].get('priceUsd')
         if price is not None:
             return float(price)
     except:
@@ -40,36 +38,35 @@ def fetch_price(ca):
 def get_token_info(ca):
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-        res = requests.get(url, timeout=5).json()
-        return res.get('pairs', [{}])[0].get('baseToken', {}).get('symbol', 'TOKEN')
+        data = requests.get(url, timeout=5).json()
+        return data.get('pairs', [{}])[0].get('baseToken', {}).get('symbol', 'TOKEN')
     except:
         return "TOKEN"
 
 # ==========================================================
-# 🧠 CÉREBRO IA v29
+# CÉREBRO IA
 # ==========================================================
 def ia_brain(pnl, pnl_max, h_precos):
     if len(h_precos) < 3: return False, ""
-    if pnl_max > 1.0 and (pnl < pnl_max - 0.2):
+    if pnl_max > 1.0 and pnl < pnl_max - 0.2:
         return True, "IA: Realização de Lucro"
     if pnl < -2.0:
         return True, "IA: Stop Preventivo"
     return False, ""
 
 # ==========================================================
-# 💱 CÂMBIO DINÂMICO
+# CÂMBIO
 # ==========================================================
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
-        url = "https://open.er-api.com/v6/latest/USD"
-        data = requests.get(url, timeout=5).json()
+        data = requests.get("https://open.er-api.com/v6/latest/USD", timeout=5).json()
         return float(data['rates'].get('BRL', 5.05))
     except:
         return 5.05
 
 # ==========================================================
-# 🖥️ INTERFACE STREAMLIT
+# INTERFACE
 # ==========================================================
 st.set_page_config(page_title="Sniper Pro v29", layout="wide")
 
@@ -77,97 +74,94 @@ SENHA = os.getenv('SNIPER_SENHA', '1234')
 
 if not st.session_state.auth:
     st.title("🛡️ Acesso Sniper v29")
-    senha = st.text_input("Senha de Operação", type="password")
+    senha = st.text_input("Senha", type="password")
     if st.button("Entrar"):
         if senha == SENHA:
             st.session_state.auth = True
             st.rerun()
 else:
     with st.sidebar:
-        st.header("💰 Gestão Financeira")
-        st.session_state.moeda = st.radio("Exibição:", ["USD", "BRL"])
+        st.header("💰 Banca")
+        st.session_state.moeda = st.radio("Moeda", ["USD", "BRL"])
         st.session_state.taxa = 1.0 if st.session_state.moeda == "USD" else get_exchange_rate()
-
         st.metric("Saldo", f"{'R\( ' if st.session_state.moeda == 'BRL' else ' \)'} {st.session_state.saldo * st.session_state.taxa:,.2f}")
-
-        novo_s = st.number_input("Alterar Saldo", value=float(st.session_state.saldo * st.session_state.taxa))
-        if st.button("💾 Salvar Novo Saldo"):
-            st.session_state.saldo = novo_s / st.session_state.taxa
+        novo = st.number_input("Alterar saldo", value=st.session_state.saldo * st.session_state.taxa)
+        if st.button("Salvar"):
+            st.session_state.saldo = novo / st.session_state.taxa
             st.rerun()
-
-        if st.button("🔴 Logout"):
+        if st.button("Logout"):
             st.session_state.auth = False
             st.rerun()
 
     if not st.session_state.running:
-        st.title("🚀 Sniper Pro v29.0 - Com Auto-Refresh Estável")
-        st.write("Atualizações automáticas a cada 2 segundos (via streamlit-autorefresh)")
+        st.title("🚀 Sniper Pro v29")
+        ca = st.text_input("Contract Address (CA) do token")
+        valor = st.number_input(f"Valor por ordem ({st.session_state.moeda})", value=10.0 * st.session_state.taxa)
 
-        ca_input = st.text_input("CA do Token (Solana):")
-        invest_input = st.number_input(f"Valor por Ordem ({st.session_state.moeda})", value=10.0 * st.session_state.taxa)
-
-        if st.button("⚡ INICIAR MOTOR IA"):
-            price_test = fetch_price(ca_input.strip())
-            if price_test:
-                st.session_state.t_nome = get_token_info(ca_input.strip())
-                st.session_state.ca = ca_input.strip()
-                st.session_state.invest_usd = invest_input / st.session_state.taxa
-
-                p_inicio = price_test
-                st.session_state.trades = [{"ent": p_inicio, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "h": [p_inicio]} for _ in range(10)]
-                st.session_state.order_texts = [""] * 10
-
+        if st.button("INICIAR BOT"):
+            preco = fetch_price(ca.strip())
+            if preco:
+                st.session_state.ca = ca.strip()
+                st.session_state.t_nome = get_token_info(ca.strip())
+                st.session_state.invest_usd = valor / st.session_state.taxa
+                entrada = preco
+                st.session_state.trades = [
+                    {"ent": entrada, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "h": [entrada]}
+                    for _ in range(10)
+                ]
                 st.session_state.running = True
                 st.rerun()
             else:
-                st.error("Erro: Não foi possível detectar o preço. Verifique o CA.")
+                st.error("Não foi possível obter o preço. Verifique o CA.")
     else:
-        col_title, col_btn = st.columns([3, 1])
-        col_title.subheader(f"🟢 Monitorando: {st.session_state.t_nome}")
-        if col_btn.button("🛑 DESATIVAR BOT", use_container_width=True):
+        col1, col2 = st.columns([3,1])
+        col1.subheader(f"🟢 Monitorando: {st.session_state.t_nome}")
+        if col2.button("PARAR BOT"):
             st.session_state.running = False
             st.rerun()
 
-        # Auto-refresh a cada 2000ms (2 segundos). Mude para 1000 para 1 segundo.
-        count = st_autorefresh(interval=2000, key="datarefresher")
+        # === FETCH E ATUALIZAÇÃO DO PREÇO ===
+        preco_atual = fetch_price(st.session_state.ca)
+        if preco_atual is None:
+            preco_atual = st.session_state.trades[0]["ent"]  # fallback
 
-        # Fetch preço atual a cada refresh
-        p_atual = fetch_price(st.session_state.ca)
-        if p_atual is None:
-            p_atual = st.session_state.trades[0]['ent']  # Fallback se falhar
+        hora = time.strftime("%H:%M:%S")
+        st.markdown(f"### Preço atual: `{preco_atual:.10f}` (às {hora})")
+        st.markdown(f"**Saldo:** {'R\( ' if st.session_state.moeda == 'BRL' else ' \)'} {st.session_state.saldo * st.session_state.taxa:,.2f}")
 
-        ultima_atualizacao = time.strftime('%H:%M:%S')
+        # === PROCESSAMENTO DAS 10 ORDENS ===
+        for i, trade in enumerate(st.session_state.trades):
+            if trade["on"]:
+                trade["pnl"] = ((preco_atual / trade["ent"]) - 1) * 100
+                if trade["pnl"] > trade["max"]:
+                    trade["max"] = trade["pnl"]
+                trade["h"].append(preco_atual)
+                if len(trade["h"]) > 5:
+                    trade["h"].pop(0)
 
-        st.markdown(f"### Preço Atual: `{p_atual:.10f}` (atualizado às {ultima_atualizacao})")
-        st.markdown(f"**Banca:** {'R\( ' if st.session_state.moeda == 'BRL' else ' \)'} {st.session_state.saldo * st.session_state.taxa:,.2f}")
-
-        for i, t in enumerate(st.session_state.trades):
-            if t['on']:
-                t['pnl'] = ((p_atual / t['ent']) - 1) * 100
-                if t['pnl'] > t['max']: t['max'] = t['pnl']
-                t['h'].append(p_atual)
-                if len(t['h']) > 5: t['h'].pop(0)
-
-                fechar, motivo = ia_brain(t['pnl'], t['max'], t['h'])
+                fechar, motivo = ia_brain(trade["pnl"], trade["max"], trade["h"])
                 if fechar:
-                    t['on'] = False
-                    t['res'] = motivo
-                    lucro_usd = st.session_state.invest_usd * (t['pnl'] / 100)
-                    st.session_state.saldo += lucro_usd
+                    trade["on"] = False
+                    trade["res"] = motivo
+                    lucro = st.session_state.invest_usd * (trade["pnl"] / 100)
+                    st.session_state.saldo += lucro
                     st.session_state.historico.append({
-                        'ciclo': st.session_state.ciclo,
-                        'ordem': i+1,
-                        'pnl': round(t['pnl'], 2),
-                        'motivo': motivo
+                        "ciclo": st.session_state.ciclo,
+                        "ordem": i+1,
+                        "pnl": round(trade["pnl"], 2),
+                        "motivo": motivo
                     })
 
-                cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
-                status_txt = "🔵" if t['on'] else "🤖"
-                st.session_state.order_texts[i] = f"{status_txt} Ordem {i+1}: <b style='color:{cor}'>{t['pnl']:+.2f}%</b> | {t['res']}"
-
-            st.markdown(st.session_state.order_texts[i], unsafe_allow_html=True)
+                cor = "#00FF00" if trade["pnl"] >= 0 else "#FF4B4B"
+                status = "🔵" if trade["on"] else "🤖"
+                st.markdown(f"{status} Ordem {i+1}: <b style='color:{cor}'>{trade['pnl']:+.2f}%</b> | {trade['res']}", unsafe_allow_html=True)
+            else:
+                st.markdown(f"🤖 Ordem {i+1}: <b style='color:#888'>{trade['pnl']:+.2f}%</b> | {trade['res']}", unsafe_allow_html=True)
 
         if st.session_state.historico:
-            st.subheader("📜 Histórico de Trades")
-            df_hist = pd.DataFrame(st.session_state.historico)
-            st.dataframe(df_hist)
+            st.subheader("📜 Histórico de Trades Fechados")
+            df = pd.DataFrame(st.session_state.historico)
+            st.dataframe(df)
+
+        # === AUTO UPDATE A CADA ~3 SEGUNDOS (estável no Streamlit Cloud) ===
+        st.rerun()
