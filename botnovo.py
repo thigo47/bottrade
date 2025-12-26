@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 # ==========================================================
-# 💾 PERSISTÊNCIA DE DADOS
+# 💾 DATABASE
 # ==========================================================
 @st.cache_resource
 def get_db():
@@ -14,138 +14,133 @@ def get_db():
 db = get_db()
 
 # ==========================================================
-# 🧠 CÉREBRO IA v25.0 - LOGIC ENGINE
+# 🧠 ENGINE DE PREVISÃO (PREDITIVA)
 # ==========================================================
-def decisao_ia_v25(pnl, pnl_max, historico_precos):
-    """
-    Análise de Momentum e Proteção de Capital Ultra-Rápida
-    """
-    if len(historico_precos) < 10: return False, ""
+def motor_ia_v27(pnl, pnl_max, h_precos):
+    if len(h_precos) < 3: return False, ""
 
-    # 1. ANÁLISE DE MOMENTUM (ACELERAÇÃO)
-    ultimos_precos = historico_precos[-5:]
-    subida_media = (ultimos_precos[-1] / ultimos_precos[0]) - 1
+    # Cálculo de Tendência Imediata (Derivada Simples)
+    # Se a variação entre os últimos milissegundos é negativa e o lucro é alto -> SAI
+    tendencia = h_precos[-1] - h_precos[-2]
     
-    # Se o preço estagnou após uma subida, realiza lucro
-    if pnl > 1.5 and abs(subida_media) < 0.0001:
-        return True, "IA: Exaustão Detectada (Take Profit)"
+    if pnl > 0.5:
+        # Se o preço parou de subir (tendência zero ou negativa), realiza lucro "no estalo"
+        if tendencia <= 0: 
+            return True, "IA: Saída por Estagnação (Preditivo)"
 
-    # 2. PROTEÇÃO DE LUCRO EXPONENCIAL
-    # Se o lucro foi alto, a tolerância para devolução é mínima
-    if pnl_max >= 8.0:
-        if pnl < 7.0: return True, "IA: Proteção de Topo (8% -> 7%)"
-    elif pnl_max >= 3.0:
-        if pnl < (pnl_max * 0.8): return True, "IA: Trailing 80% Ativado"
+    if pnl < -1.8: # Stop mais curto para evitar slippage
+        return True, "IA: Corte de Risco Rápido"
 
-    # 3. STOP LOSS INTELIGENTE (ANTI-DUMP)
-    # Se cair mais de 1% em apenas 2 atualizações de preço, é dump
-    queda_relampago = (historico_precos[-1] / historico_precos[-3]) - 1
-    if queda_relampago < -0.01:
-        return True, "IA: Alerta de Dump (Saída Imediata)"
-
-    # Stop Fixo de Segurança IA
-    if pnl < -2.8:
-        return True, "IA: Corte de Risco"
+    # Trailing dinâmico "Shadow"
+    if pnl_max > 2.0 and pnl < (pnl_max - 0.3):
+        return True, "IA: Shadow Trailing"
 
     return False, ""
 
 # ==========================================================
-# ⚙️ ENGINE DE MERCADO
+# ⚙️ COMUNICAÇÃO ULTRA-RÁPIDA (JUPYTER API)
 # ==========================================================
-def get_market_data(ca):
+def get_price_v27(ca):
+    """
+    Usa a API da Jupiter para preços. É muito mais rápida que o DexScreener
+    pois a Jupiter é um motor de execução direto.
+    """
+    try:
+        # Consultando a Jupiter (Gratuito e sem delay de agregação)
+        url = f"https://price.jup.ag/v4/price?ids={ca}"
+        res = requests.get(url, timeout=0.5).json()
+        return float(res['data'][ca]['price'])
+    except:
+        return None
+
+def get_token_info(ca):
+    # Usamos o DexScreener apenas UMA VEZ para pegar o nome do token
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
-        res = requests.get(url, timeout=5).json()
-        pair = max([p for p in res['pairs'] if p['chainId'] == 'solana'], 
-                   key=lambda x: float(x['liquidity']['usd']))
-        return {"nome": pair['baseToken']['symbol'], "pair": pair['pairAddress'], "preco": float(pair['priceUsd'])}
-    except: return None
-
-def get_price(pair_addr):
-    try:
-        url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{pair_addr}"
-        return float(requests.get(url, timeout=1).json()['pair']['priceUsd'])
-    except: return None
+        res = requests.get(url, timeout=3).json()
+        return res['pairs'][0]['baseToken']['symbol']
+    except:
+        return "TOKEN"
 
 # ==========================================================
 # 🖥️ INTERFACE
 # ==========================================================
-st.set_page_config(page_title="Sniper Pro v25 - Ultra AI", layout="wide")
+st.set_page_config(page_title="Sniper Pro v27 - LightSpeed", layout="wide")
 
 if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if "running" not in st.session_state: st.session_state.running = False
 
 if not st.session_state.logged_in:
-    st.title("🧠 Sniper Ultra AI v25")
+    st.title("⚡ Sniper Light-Speed")
     u, p = st.text_input("User"), st.text_input("Pass", type="password")
-    if st.button("Acessar"):
+    if st.button("Ligar Motor"):
         if u == "admin" and p == "1234":
             st.session_state.logged_in = True
             st.rerun()
 else:
     with st.sidebar:
-        st.header("🎮 Dashboard")
+        st.header("⚙️ Status do Motor")
         moeda = st.radio("Moeda:", ["USD", "BRL"])
-        t_view = 5.05 if moeda == "BRL" else 1.0
-        st.metric("Saldo Real", f"{'R$' if moeda == 'BRL' else '$'} {db['saldo'] * t_view:,.2f}")
-        if st.button("Log Out"):
+        taxa = 5.05 if moeda == "BRL" else 1.0
+        st.metric("Banca Disponível", f"{db['saldo'] * taxa:,.2f}")
+        if st.button("Desligar"):
             st.session_state.logged_in = False
             st.rerun()
 
     if not st.session_state.running:
-        st.title("🚀 Sniper Pro v25.0")
-        ca_input = st.text_input("Token CA:")
-        val_input = st.number_input(f"Valor Ordem ({moeda})", value=10.0 * t_view)
+        st.title("🚀 Sniper Pro v27.0")
+        st.info("Utilizando JUPYTER API v4 para latência reduzida.")
+        ca_input = st.text_input("CA do Token (Solana):")
+        val_input = st.number_input(f"Valor por Ordem ({moeda})", value=10.0 * taxa)
         
-        if st.button("🔥 INICIAR IA AUTÓNOMA"):
-            data = get_market_data(ca_input.strip())
-            if data:
-                st.session_state.update({"t_nome": data['nome'], "t_pair": data['pair'], 
-                                         "t_preco": data['preco'], "invest": val_input/t_view, "running": True})
-                st.rerun()
+        if st.button("⚡ DISPARAR SNIPER"):
+            nome = get_token_info(ca_input.strip())
+            st.session_state.update({
+                "t_nome": nome, "ca": ca_input.strip(), 
+                "invest": val_input/taxa, "running": True
+            })
+            st.rerun()
     else:
-        # PAINEL DE EXECUÇÃO IA
+        # PAINEL DE OPERAÇÃO EM ALTA VELOCIDADE
         c1, c2 = st.columns([3, 1])
-        c1.subheader(f"🤖 IA Operando: {st.session_state.t_nome}")
-        if c2.button("🛑 PARAR AGORA"):
+        c1.subheader(f"🟢 EM EXECUÇÃO: {st.session_state.t_nome}")
+        if c2.button("🛑 CANCELAR"):
             st.session_state.running = False
             st.rerun()
 
-        price_mon = c2.empty()
-        bal_mon = c2.empty()
+        price_box = c1.empty()
         slots = [st.empty() for _ in range(10)]
 
         while st.session_state.running:
-            p_ref = get_price(st.session_state.t_pair)
-            if not p_ref: continue
+            p_start = get_price_v27(st.session_state.ca)
+            if not p_start: continue
             
-            trades = [{"ent": p_ref, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "h": [p_ref]} for _ in range(10)]
-            
+            trades = [{"ent": p_start, "pnl": 0.0, "on": True, "max": 0.0, "res": "", "h": [p_start]} for _ in range(10)]
+
             while any(t['on'] for t in trades) and st.session_state.running:
-                p_now = get_price(st.session_state.t_pair)
+                p_now = get_price_v27(st.session_state.ca)
                 if p_now:
-                    price_mon.markdown(f"<div style='background:#000; padding:10px; border-radius:5px; text-align:center; font-size:24px;'>{p_now:.8f}</div>", unsafe_allow_html=True)
-                    bal_mon.info(f"Saldo: {db['saldo']*t_view:,.2f}")
+                    price_box.markdown(f"### Preço Atual: `{p_now:.8f}`")
                     
                     for i, t in enumerate(trades):
                         if t['on']:
                             t['pnl'] = ((p_now / t['ent']) - 1) * 100
                             if t['pnl'] > t['max']: t['max'] = t['pnl']
                             t['h'].append(p_now)
-                            if len(t['h']) > 20: t['h'].pop(0)
+                            if len(t['h']) > 5: t['h'].pop(0)
 
-                            # CHAMADA DO CÉREBRO IA
-                            finalizar, motivo = decisao_ia_v25(t['pnl'], t['max'], t['h'])
+                            # DECISÃO PREDITIVA
+                            fechar, motivo = motor_ia_v27(t['pnl'], t['max'], t['h'])
                             
-                            if finalizar:
+                            if fechar:
                                 t['on'] = False
                                 t['res'] = motivo
-                                db['saldo'] += (st.session_state.invest * (t['pnl']/100)) - (st.session_state.invest * 0.01)
+                                db['saldo'] += (st.session_state.invest * (t['pnl']/100)) - (st.session_state.invest * 0.005) # Taxa Jup é menor
 
-                            color = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
-                            slots[i].markdown(f"**Ordem {i+1}:** <span style='color:{color}'>{t['pnl']:+.2f}%</span> | {t['res']}", unsafe_allow_html=True)
+                            cor = "#00FF00" if t['pnl'] >= 0 else "#FF4B4B"
+                            slots[i].markdown(f"Ordem {i+1}: <b style='color:{cor}'>{t['pnl']:+.2f}%</b> | {t['res']}", unsafe_allow_html=True)
                 
-                time.sleep(0.05)
+                # Sem sleep longo para manter o processador focado na API
+                time.sleep(0.001) 
             
-            db['historico'].insert(0, {"DATA": datetime.now().strftime("%H:%M")})
             db['ciclo'] += 1
