@@ -3,6 +3,7 @@ import time
 import requests
 import pandas as pd
 import os
+from streamlit_autorefresh import st_autorefresh  # <-- Novo import (precisa da lib no requirements.txt)
 
 # ==========================================================
 # 💾 INICIALIZAÇÃO SEGURA DO ESTADO
@@ -99,8 +100,8 @@ else:
             st.rerun()
 
     if not st.session_state.running:
-        st.title("🚀 Sniper Pro v29.0 - Atualização Automática Estável")
-        st.write("Usando st.autorefresh para updates suaves em tempo real")
+        st.title("🚀 Sniper Pro v29.0 - Com Auto-Refresh Estável")
+        st.write("Atualizações automáticas a cada 2 segundos (via streamlit-autorefresh)")
 
         ca_input = st.text_input("CA do Token (Solana):")
         invest_input = st.number_input(f"Valor por Ordem ({st.session_state.moeda})", value=10.0 * st.session_state.taxa)
@@ -127,19 +128,17 @@ else:
             st.session_state.running = False
             st.rerun()
 
-        # Auto refresh a cada 2 segundos (mude para 1000 para 1s)
-        st.autorefresh(interval=2000, key="auto")
+        # Auto-refresh a cada 2000ms (2 segundos). Mude para 1000 para 1 segundo.
+        count = st_autorefresh(interval=2000, key="datarefresher")
 
-        # Fetch preço atual
+        # Fetch preço atual a cada refresh
         p_atual = fetch_price(st.session_state.ca)
-        if p_atual:
-            ultima_atualizacao = time.strftime('%H:%M:%S')
-        else:
-            p_atual = st.session_state.trades[0]['ent'] if st.session_state.trades else 0
-            ultima_atualizacao = "Erro no fetch"
+        if p_atual is None:
+            p_atual = st.session_state.trades[0]['ent']  # Fallback se falhar
 
-        # Atualiza UI
-        st.markdown(f"### Preço Atual: `{p_atual:.10f}` (às {ultima_atualizacao})")
+        ultima_atualizacao = time.strftime('%H:%M:%S')
+
+        st.markdown(f"### Preço Atual: `{p_atual:.10f}` (atualizado às {ultima_atualizacao})")
         st.markdown(f"**Banca:** {'R\( ' if st.session_state.moeda == 'BRL' else ' \)'} {st.session_state.saldo * st.session_state.taxa:,.2f}")
 
         for i, t in enumerate(st.session_state.trades):
@@ -172,7 +171,3 @@ else:
             st.subheader("📜 Histórico de Trades")
             df_hist = pd.DataFrame(st.session_state.historico)
             st.dataframe(df_hist)
-
-        # Incrementa ciclo ao final de cada "ciclo manual" se quiser
-        if p_atual != st.session_state.trades[0]['ent']:  # Só se preço mudou significativamente
-            pass  # Pode adicionar lógica aqui se quiser ciclos separados
