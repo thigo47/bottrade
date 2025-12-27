@@ -173,36 +173,45 @@ class AutoTradeMonitor:
         return closed_trades
     
     def get_performance_stats(self) -> Dict:
-        """Retorna estatísticas de performance"""
-        if self.performance['total_trades'] == 0:
-            return {
-                'win_rate': 0.0,
-                'avg_profit': 0.0,
-                'total_profit': 0.0,
-                'profit_factor': 0.0,
-                'active_trades': len(self.active_trades)
-            }
-        
-        win_rate = (self.performance['winning_trades'] / self.performance['total_trades']) * 100
-        avg_profit = self.performance['total_profit'] / self.performance['total_trades']
-        
-        # Calcular profit factor (lucro total / prejuízo total)
-        winning_trades = [t for t in self.trade_history if t['final_profit_percent'] > 0]
-        losing_trades = [t for t in self.trade_history if t['final_profit_percent'] < 0]
-        
-        total_wins = sum(t['final_profit_value'] for t in winning_trades)
-        total_losses = abs(sum(t['final_profit_value'] for t in losing_trades))
-        
-        profit_factor = total_wins / total_losses if total_losses > 0 else float('inf')
-        
-        return {
-            'win_rate': round(win_rate, 2),
-            'avg_profit': round(avg_profit, 2),
-            'total_profit': round(self.performance['total_profit'], 2),
-            'profit_factor': round(profit_factor, 2),
+        """Retorna estatísticas de performance - VERSÃO CORRIGIDA"""
+        # Garantir que sempre retorna os campos necessários
+        default_stats = {
+            'win_rate': 0.0,
+            'avg_profit': 0.0,
+            'total_profit': 0.0,
+            'profit_factor': 0.0,
             'active_trades': len(self.active_trades),
-            'total_trades': self.performance['total_trades']
+            'total_trades': self.performance.get('total_trades', 0)
         }
+        
+        if self.performance['total_trades'] == 0:
+            return default_stats
+        
+        try:
+            win_rate = (self.performance['winning_trades'] / self.performance['total_trades']) * 100
+            avg_profit = self.performance['total_profit'] / self.performance['total_trades']
+            
+            # Calcular profit factor (lucro total / prejuízo total)
+            winning_trades = [t for t in self.trade_history if t.get('final_profit_percent', 0) > 0]
+            losing_trades = [t for t in self.trade_history if t.get('final_profit_percent', 0) < 0]
+            
+            total_wins = sum(t.get('final_profit_value', 0) for t in winning_trades)
+            total_losses = abs(sum(t.get('final_profit_value', 0) for t in losing_trades))
+            
+            profit_factor = total_wins / total_losses if total_losses > 0 else float('inf')
+            
+            return {
+                'win_rate': round(win_rate, 2),
+                'avg_profit': round(avg_profit, 2),
+                'total_profit': round(self.performance['total_profit'], 2),
+                'profit_factor': round(profit_factor, 2),
+                'active_trades': len(self.active_trades),
+                'total_trades': self.performance['total_trades']
+            }
+            
+        except Exception:
+            # Se der erro, retorna os defaults
+            return default_stats
 
 # ==========================================================
 # SISTEMA DE DECISÃO AUTOMÁTICA
@@ -358,8 +367,8 @@ with st.sidebar:
     stats = st.session_state.trade_monitor.get_performance_stats()
     
     st.metric("💰 SALDO", f"${st.session_state.balance:,.2f}")
-    st.metric("🎯 WIN RATE", f"{stats['win_rate']:.1f}%")
-    st.metric("📊 LUCRO TOTAL", f"${stats['total_profit']:+,.2f}")
+    st.metric("🎯 WIN RATE", f"{stats.get('win_rate', 0):.1f}%")
+    st.metric("📊 LUCRO TOTAL", f"${stats.get('total_profit', 0):+,.2f}")
     
     st.divider()
     
@@ -582,20 +591,20 @@ if st.session_state.trade_monitor.active_trades:
     if closed_trades:
         st.subheader("🔒 TRADES FECHADOS RECENTEMENTE")
         for trade in closed_trades[-3:]:  # Mostrar últimos 3
-            profit_color = "green" if trade['final_profit_percent'] > 0 else "red"
+            profit_color = "green" if trade.get('final_profit_percent', 0) > 0 else "red"
             
             st.markdown(f"""
             <div style='border: 2px solid {profit_color}; border-radius: 10px; padding: 10px; margin: 10px 0;'>
-                <strong>{trade['symbol']}</strong> - {trade['exit_reason']}<br>
-                Entrada: ${trade['entry_price']:.10f} | Saída: ${trade['exit_price']:.10f}<br>
+                <strong>{trade.get('symbol', 'TOKEN')}</strong> - {trade.get('exit_reason', 'DESCONHECIDO')}<br>
+                Entrada: ${trade.get('entry_price', 0):.10f} | Saída: ${trade.get('exit_price', 0):.10f}<br>
                 <span style='color:{profit_color}; font-weight:bold;'>
-                    Resultado: {trade['final_profit_percent']:+.2f}% (${trade['final_profit_value']:+.2f})
+                    Resultado: {trade.get('final_profit_percent', 0):+.2f}% (${trade.get('final_profit_value', 0):+.2f})
                 </span>
             </div>
             """, unsafe_allow_html=True)
             
             # Adicionar ao saldo
-            st.session_state.balance += trade['position_size'] + trade['final_profit_value']
+            st.session_state.balance += trade.get('position_size', 0) + trade.get('final_profit_value', 0)
     
     # Mostrar trades ativos
     st.subheader("🟢 TRADES EM ANDAMENTO")
@@ -606,35 +615,35 @@ if st.session_state.trade_monitor.active_trades:
         with cols[idx % 3]:
             with st.container(border=True, height=250):
                 # Status
-                profit_percent = trade['current_profit_percent']
+                profit_percent = trade.get('current_profit_percent', 0)
                 profit_color = "green" if profit_percent >= 0 else "red"
                 
-                st.markdown(f"**{trade['symbol']}** (ID: {trade['id']})")
+                st.markdown(f"**{trade.get('symbol', 'TOKEN')}** (ID: {trade.get('id', '?')})")
                 st.markdown(f"<span style='color:{profit_color}; font-size:24px; font-weight:bold;'>{profit_percent:+.2f}%</span>", 
                           unsafe_allow_html=True)
                 
                 # Informações
-                st.caption(f"Entrada: ${trade['entry_price']:.10f}")
-                st.caption(f"Atual: ${trade['current_price']:.10f}")
+                st.caption(f"Entrada: ${trade.get('entry_price', 0):.10f}")
+                st.caption(f"Atual: ${trade.get('current_price', 0):.10f}")
                 
                 # Stop Loss e Take Profit
-                st.caption(f"⛔ Stop: ${trade['stop_loss']:.10f}")
-                st.caption(f"🎯 Take Profit: ${trade['take_profit']:.10f}")
+                st.caption(f"⛔ Stop: ${trade.get('stop_loss', 0):.10f}")
+                st.caption(f"🎯 Take Profit: ${trade.get('take_profit', 0):.10f}")
                 
-                if trade['trailing_stop_activated']:
-                    st.caption(f"📊 Trailing Stop: ${trade['trailing_stop_price']:.10f}")
+                if trade.get('trailing_stop_activated', False):
+                    st.caption(f"📊 Trailing Stop: ${trade.get('trailing_stop_price', 0):.10f}")
                 
                 # Máximo atingido
-                if trade['max_profit_percent'] > 0:
-                    st.caption(f"📈 Máximo: {trade['max_profit_percent']:+.2f}%")
+                if trade.get('max_profit_percent', 0) > 0:
+                    st.caption(f"📈 Máximo: {trade.get('max_profit_percent', 0):+.2f}%")
                 
                 # Botão de saída manual
-                if st.button("⏹️ SAIR MANUAL", key=f"exit_{trade['id']}", use_container_width=True):
+                if st.button("⏹️ SAIR MANUAL", key=f"exit_{trade.get('id', '?')}", use_container_width=True):
                     # Fechar trade manualmente
-                    current_price = get_current_price(trade['ca'])
+                    current_price = get_current_price(trade.get('ca', ''))
                     if current_price:
-                        profit_percent = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
-                        profit_value = trade['position_size'] * (profit_percent / 100)
+                        profit_percent = ((current_price - trade.get('entry_price', 0)) / trade.get('entry_price', 1)) * 100
+                        profit_value = trade.get('position_size', 0) * (profit_percent / 100)
                         
                         trade['status'] = 'CLOSED'
                         trade['exit_price'] = current_price
@@ -646,14 +655,14 @@ if st.session_state.trade_monitor.active_trades:
                         st.session_state.trade_monitor.trade_history.append(trade.copy())
                         st.session_state.trade_monitor.active_trades.remove(trade)
                         
-                        st.session_state.balance += trade['position_size'] + profit_value
+                        st.session_state.balance += trade.get('position_size', 0) + profit_value
                         st.success(f"Trade fechado manualmente: {profit_percent:+.2f}%")
                         st.rerun()
 else:
     st.info("Nenhum trade ativo no momento.")
 
 # ==========================================================
-# SEÇÃO DE HISTÓRICO E ESTATÍSTICAS
+# SEÇÃO DE HISTÓRICO E ESTATÍSTICAS - VERSÃO CORRIGIDA
 # ==========================================================
 st.header("📊 HISTÓRICO E ESTATÍSTICAS")
 
@@ -661,23 +670,27 @@ col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
 
 with col_stats1:
     stats = st.session_state.trade_monitor.get_performance_stats()
-    st.metric("🎯 WIN RATE", f"{stats['win_rate']:.1f}%")
+    st.metric("🎯 WIN RATE", f"{stats.get('win_rate', 0):.1f}%")
 
 with col_stats2:
-    st.metric("💰 LUCRO TOTAL", f"${stats['total_profit']:+,.2f}")
+    st.metric("💰 LUCRO TOTAL", f"${stats.get('total_profit', 0):+,.2f}")
 
 with col_stats3:
-    st.metric("📊 TRADES", stats['total_trades'])
+    st.metric("📊 TRADES", stats.get('total_trades', 0))
 
 with col_stats4:
-    st.metric("📈 FACTOR", f"{stats['profit_factor']:.2f}")
+    profit_factor = stats.get('profit_factor', 0)
+    if profit_factor == float('inf'):
+        st.metric("📈 FACTOR", "∞")
+    else:
+        st.metric("📈 FACTOR", f"{profit_factor:.2f}")
 
 # Gráfico de performance
 if st.session_state.trade_monitor.trade_history:
     df_history = pd.DataFrame(st.session_state.trade_monitor.trade_history)
     
     # Gráfico de lucro acumulado
-    if not df_history.empty:
+    if not df_history.empty and 'final_profit_value' in df_history.columns:
         df_history['cumulative_profit'] = df_history['final_profit_value'].cumsum()
         
         fig = go.Figure()
@@ -701,22 +714,28 @@ if st.session_state.trade_monitor.trade_history:
         # Tabela de histórico
         st.subheader("📜 ÚLTIMOS TRADES")
         
-        recent_trades = df_history.tail(10).sort_index(ascending=False)
+        # Filtrar colunas que existem
+        available_columns = [col for col in ['symbol', 'exit_reason', 'entry_price', 'exit_price', 'final_profit_percent'] 
+                           if col in df_history.columns]
         
-        for _, trade in recent_trades.iterrows():
-            profit_color = "🟢" if trade['final_profit_percent'] > 0 else "🔴"
+        if available_columns:
+            recent_trades = df_history[available_columns].tail(10).sort_index(ascending=False)
             
-            col1, col2, col3 = st.columns([2, 2, 1])
-            
-            with col1:
-                st.text(f"{trade['symbol']} - {trade['exit_reason']}")
-            
-            with col2:
-                st.text(f"Entrada: ${trade['entry_price']:.8f}")
-                st.text(f"Saída: ${trade['exit_price']:.8f}")
-            
-            with col3:
-                st.markdown(f"**{profit_color} {trade['final_profit_percent']:+.2f}%**")
+            for _, trade in recent_trades.iterrows():
+                profit_percent = trade.get('final_profit_percent', 0)
+                profit_color = "🟢" if profit_percent > 0 else "🔴"
+                
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.text(f"{trade.get('symbol', 'TOKEN')} - {trade.get('exit_reason', 'DESCONHECIDO')}")
+                
+                with col2:
+                    st.text(f"Entrada: ${trade.get('entry_price', 0):.8f}")
+                    st.text(f"Saída: ${trade.get('exit_price', 0):.8f}")
+                
+                with col3:
+                    st.markdown(f"**{profit_color} {profit_percent:+.2f}%**")
 
 # ==========================================================
 # SISTEMA DE AUTO TRADING
@@ -728,15 +747,15 @@ if st.session_state.auto_trading and st.session_state.token_watchlist:
     for token in st.session_state.token_watchlist:
         # Verificar se já tem trade ativo para este token
         active_trade_for_token = any(
-            t['ca'] == token['ca'] and t['status'] == 'ACTIVE' 
+            t.get('ca') == token.get('ca') and t.get('status') == 'ACTIVE' 
             for t in st.session_state.trade_monitor.active_trades
         )
         
         if not active_trade_for_token:
             # Analisar entrada
-            token_data = fetch_token_data(token['ca'])
+            token_data = fetch_token_data(token.get('ca', ''))
             if token_data:
-                current_price = get_current_price(token['ca'])
+                current_price = get_current_price(token.get('ca', ''))
                 if current_price:
                     analysis = st.session_state.decision_engine.analyze_entry_signal(
                         token_data, current_price
@@ -758,7 +777,7 @@ if st.session_state.auto_trading and st.session_state.token_watchlist:
                             )
                             
                             st.session_state.balance -= position_value
-                            st.success(f"🤖 Auto trade iniciado para {token['symbol']}!")
+                            st.success(f"🤖 Auto trade iniciado para {token.get('symbol', 'TOKEN')}!")
     
     st.info(f"Monitorando {len(st.session_state.token_watchlist)} tokens...")
 
@@ -800,23 +819,4 @@ st.markdown("""
     
     .stButton > button:hover {
         transform: scale(1.02);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    }
-    
-    /* Containers de trade */
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        border-radius: 10px;
-        padding: 10px;
-    }
-    
-    /* Alertas */
-    .stAlert {
-        border-radius: 10px;
-    }
-    
-    /* Métricas */
-    div[data-testid="stMetricValue"] {
-        font-size: 24px;
-    }
-</style>
-""", unsafe_allow_html=True)
+        box-shadow: 0 4px 12
