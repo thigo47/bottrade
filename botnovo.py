@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from typing import Dict, List, Tuple, Optional
 import warnings
+import google.generativeai as genai  # Para Gemini
+# Para DeepSeek (opcional): import openai
 warnings.filterwarnings('ignore')
 
 # ==========================================================
@@ -18,6 +20,153 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide"
 )
+
+# ==========================================================
+# CONFIGURAÇÃO DA IA (ESCOLHA UMA)
+# ==========================================================
+class IAAnalyzer:
+    """Analisador IA para decisões de trade"""
+    
+    def __init__(self, ia_type="gemini", api_key=None):
+        self.ia_type = ia_type
+        
+        if ia_type == "gemini" and api_key:
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel('gemini-pro')
+        elif ia_type == "deepseek" and api_key:
+            # Configuração para DeepSeek
+            import openai
+            openai.api_key = api_key
+            openai.api_base = "https://api.deepseek.com/v1"
+            self.client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
+        else:
+            self.model = None
+    
+    def analyze_token(self, token_data: Dict, price_history: List[float] = None) -> Dict:
+        """Analisa token usando IA"""
+        
+        if not self.model and self.ia_type != "deepseek":
+            return self._get_fallback_analysis()
+        
+        try:
+            # Preparar prompt com dados do token
+            prompt = self._create_analysis_prompt(token_data, price_history)
+            
+            if self.ia_type == "gemini":
+                response = self.model.generate_content(prompt)
+                analysis_text = response.text
+            else:  # deepseek
+                response = self.client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": "Você é um especialista em trading de criptomoedas."},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                analysis_text = response.choices[0].message.content
+            
+            # Extrair informações da resposta
+            return self._parse_ia_response(analysis_text, token_data)
+            
+        except Exception as e:
+            st.error(f"Erro na análise IA: {e}")
+            return self._get_fallback_analysis()
+    
+    def _create_analysis_prompt(self, token_data: Dict, price_history: List[float]) -> str:
+        """Cria prompt para a IA"""
+        
+        symbol = token_data.get('symbol', 'TOKEN')
+        price = float(token_data.get('pairs', [{}])[0].get('priceUsd', 0))
+        volume_24h = float(token_data.get('pairs', [{}])[0].get('volume', {}).get('h24', 0))
+        liquidity = float(token_data.get('pairs', [{}])[0].get('liquidity', {}).get('usd', 0))
+        price_change = float(token_data.get('pairs', [{}])[0].get('priceChange', {}).get('h24', 0))
+        
+        # Dados de transações
+        txns = token_data.get('pairs', [{}])[0].get('txns', {}).get('h24', {})
+        buys = txns.get('buys', 0)
+        sells = txns.get('sells', 0)
+        
+        prompt = f"""
+        ANALISE DE TOKEN PARA TRADING - RESPONDA APENAS COM JSON
+
+        DADOS DO TOKEN:
+        - Símbolo: {symbol}
+        - Preço atual: ${price}
+        - Volume 24h: ${volume_24h:,.2f}
+        - Liquidez: ${liquidity:,.2f}
+        - Variação 24h: {price_change}%
+        - Compras 24h: {buys}
+        - Vendas 24h: {sells}
+
+        ANALISE ESTE TOKEN E RETORNE UM OBJETO JSON COM:
+        1. decision: "BUY", "HOLD" ou "AVOID"
+        2. confidence_score: 0.0 a 1.0
+        3. reasoning: breve explicação (máximo 50 palavras)
+        4. suggested_stop_loss_percent: -5 a -20
+        5. suggested_take_profit_percent: 10 a 50
+        6. risk_level: "LOW", "MEDIUM", "HIGH"
+        7. position_size_percent: 1 a 20 (percentual do capital)
+        8. time_frame: "SHORT" (minutos/horas), "MEDIUM" (horas/dias), "LONG" (dias/semanas)
+
+        CONSIDERE:
+        - Volume acima de $50k é bom, acima de $100k é excelente
+        - Liquidez acima de $20k é aceitável
+        - Relação compra/venda > 1.5 é positivo
+        - Variação muito alta (>50%) pode ser pump
+        - Combine análise técnica com fundamentos
+
+        RESPOSTA APENAS EM JSON, NADA MAIS:
+        """
+        
+        return prompt
+    
+    def _parse_ia_response(self, response: str, token_data: Dict) -> Dict:
+        """Parseia resposta da IA"""
+        
+        try:
+            # Extrair JSON da resposta
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            
+            if json_start != -1 and json_end != 0:
+                json_str = response[json_start:json_end]
+                analysis = json.loads(json_str)
+                
+                # Garantir todos os campos
+                defaults = {
+                    'decision': 'HOLD',
+                    'confidence_score': 0.5,
+                    'reasoning': 'Análise padrão',
+                    'suggested_stop_loss_percent': -10,
+                    'suggested_take_profit_percent': 20,
+                    'risk_level': 'MEDIUM',
+                    'position_size_percent': 5,
+                    'time_frame': 'SHORT'
+                }
+                
+                for key, value in defaults.items():
+                    if key not in analysis:
+                        analysis[key] = value
+                
+                return analysis
+                
+        except Exception:
+            pass
+        
+        return self._get_fallback_analysis()
+    
+    def _get_fallback_analysis(self) -> Dict:
+        """Análise de fallback se IA falhar"""
+        return {
+            'decision': 'HOLD',
+            'confidence_score': 0.5,
+            'reasoning': 'Sistema padrão - IA indisponível',
+            'suggested_stop_loss_percent': -10,
+            'suggested_take_profit_percent': 20,
+            'risk_level': 'MEDIUM',
+            'position_size_percent': 5,
+            'time_frame': 'SHORT'
+        }
 
 # ==========================================================
 # SISTEMA DE MONITORAMENTO AUTOMÁTICO
@@ -38,7 +187,7 @@ class AutoTradeMonitor:
     
     def create_trade(self, token_data: Dict, position_size: float, 
                      entry_price: float, stop_loss: float, 
-                     take_profit: float) -> Dict:
+                     take_profit: float, ia_analysis: Dict = None) -> Dict:
         """Cria um novo trade com parâmetros definidos"""
         
         trade = {
@@ -48,8 +197,9 @@ class AutoTradeMonitor:
             'entry_price': entry_price,
             'current_price': entry_price,
             'position_size': position_size,
-            'stop_loss': stop_loss,  # Preço absoluto
-            'take_profit': take_profit,  # Preço absoluto
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'ia_analysis': ia_analysis,
             'status': 'ACTIVE',
             'entry_time': datetime.now(),
             'max_profit_percent': 0.0,
@@ -58,7 +208,8 @@ class AutoTradeMonitor:
             'exit_time': None,
             'exit_reason': None,
             'trailing_stop_activated': False,
-            'trailing_stop_price': stop_loss
+            'trailing_stop_price': stop_loss,
+            'risk_level': ia_analysis.get('risk_level', 'MEDIUM') if ia_analysis else 'MEDIUM'
         }
         
         self.active_trades.append(trade)
@@ -70,22 +221,18 @@ class AutoTradeMonitor:
             if trade['ca'] == ca and trade['status'] == 'ACTIVE':
                 trade['current_price'] = current_price
                 
-                # Calcular PnL atual
                 trade['current_profit_percent'] = (
                     (current_price - trade['entry_price']) / trade['entry_price']
                 ) * 100
                 
-                # Atualizar máximo profit
                 if trade['current_profit_percent'] > trade['max_profit_percent']:
                     trade['max_profit_percent'] = trade['current_profit_percent']
                 
-                # Atualizar trailing stop
                 self._update_trailing_stop(trade, current_price)
     
     def _update_trailing_stop(self, trade: Dict, current_price: float):
         """Atualiza trailing stop dinâmico"""
-        if trade['max_profit_percent'] >= 5.0:  # Só ativa trailing após 5% de gain
-            # Trailing stop: mantém 30% do lucro máximo
+        if trade['max_profit_percent'] >= 5.0:
             trail_distance = trade['max_profit_percent'] * 0.3
             new_stop = trade['entry_price'] * (1 + (trade['max_profit_percent'] - trail_distance) / 100)
             
@@ -99,33 +246,31 @@ class AutoTradeMonitor:
         current_price = trade['current_price']
         entry_price = trade['entry_price']
         
-        # 1. TAKE PROFIT - Vários níveis
-        take_profit_levels = [
-            (trade['take_profit'], "TAKE_PROFIT_FULL"),
-            (entry_price * 1.05, "TAKE_PROFIT_5%"),
-            (entry_price * 1.10, "TAKE_PROFIT_10%"),
-            (entry_price * 1.15, "TAKE_PROFIT_15%"),
-            (entry_price * 1.20, "TAKE_PROFIT_20%")
-        ]
+        # Níveis de take profit baseados na análise de risco
+        risk_level = trade.get('risk_level', 'MEDIUM')
         
-        for tp_price, reason in take_profit_levels:
+        if risk_level == 'LOW':
+            tp_levels = [1.05, 1.08, 1.12, 1.15]
+        elif risk_level == 'HIGH':
+            tp_levels = [1.10, 1.15, 1.25, 1.35]
+        else:  # MEDIUM
+            tp_levels = [1.08, 1.12, 1.18, 1.25]
+        
+        for tp_multiplier in tp_levels:
+            tp_price = entry_price * tp_multiplier
             if current_price >= tp_price:
-                return True, reason, current_price
+                return True, f"TAKE_PROFIT_{int((tp_multiplier-1)*100)}%", current_price
         
-        # 2. STOP LOSS - Múltiplas condições
-        # Stop loss original
+        # Stop loss conditions
         if current_price <= trade['stop_loss']:
             return True, "STOP_LOSS_ORIGINAL", current_price
         
-        # Stop loss por percentual fixo (-10%)
         if trade['current_profit_percent'] <= -10.0:
             return True, "STOP_LOSS_10%", current_price
         
-        # Trailing stop
         if trade['trailing_stop_activated'] and current_price <= trade['trailing_stop_price']:
             return True, "TRAILING_STOP", current_price
         
-        # Stop loss dinâmico (se teve alto gain e caiu muito)
         if trade['max_profit_percent'] >= 20.0 and trade['current_profit_percent'] <= trade['max_profit_percent'] * 0.5:
             return True, "DYNAMIC_STOP", current_price
         
@@ -135,25 +280,22 @@ class AutoTradeMonitor:
         """Executa saídas automáticas para todos os trades ativos"""
         closed_trades = []
         
-        for trade in self.active_trades[:]:  # Copia para poder remover
+        for trade in self.active_trades[:]:
             if trade['status'] == 'ACTIVE':
                 should_exit, reason, exit_price = self.check_exit_conditions(trade)
                 
                 if should_exit:
-                    # Fechar trade
                     trade['status'] = 'CLOSED'
                     trade['exit_price'] = exit_price
                     trade['exit_time'] = datetime.now()
                     trade['exit_reason'] = reason
                     
-                    # Calcular resultado final
                     profit_percent = ((exit_price - trade['entry_price']) / trade['entry_price']) * 100
                     profit_value = trade['position_size'] * (profit_percent / 100)
                     
                     trade['final_profit_percent'] = profit_percent
                     trade['final_profit_value'] = profit_value
                     
-                    # Atualizar performance
                     self.performance['total_trades'] += 1
                     if profit_percent > 0:
                         self.performance['winning_trades'] += 1
@@ -164,7 +306,6 @@ class AutoTradeMonitor:
                     else:
                         self.performance['max_loss'] = min(self.performance['max_loss'], profit_value)
                     
-                    # Mover para histórico
                     self.trade_history.append(trade.copy())
                     self.active_trades.remove(trade)
                     
@@ -173,8 +314,7 @@ class AutoTradeMonitor:
         return closed_trades
     
     def get_performance_stats(self) -> Dict:
-        """Retorna estatísticas de performance - VERSÃO CORRIGIDA"""
-        # Garantir que sempre retorna os campos necessários
+        """Retorna estatísticas de performance"""
         default_stats = {
             'win_rate': 0.0,
             'avg_profit': 0.0,
@@ -191,7 +331,6 @@ class AutoTradeMonitor:
             win_rate = (self.performance['winning_trades'] / self.performance['total_trades']) * 100
             avg_profit = self.performance['total_profit'] / self.performance['total_trades']
             
-            # Calcular profit factor (lucro total / prejuízo total)
             winning_trades = [t for t in self.trade_history if t.get('final_profit_percent', 0) > 0]
             losing_trades = [t for t in self.trade_history if t.get('final_profit_percent', 0) < 0]
             
@@ -210,32 +349,56 @@ class AutoTradeMonitor:
             }
             
         except Exception:
-            # Se der erro, retorna os defaults
             return default_stats
 
 # ==========================================================
-# SISTEMA DE DECISÃO AUTOMÁTICA
+# SISTEMA DE DECISÃO AUTOMÁTICA COM IA
 # ==========================================================
 class AutoDecisionEngine:
-    """Motor de decisão automática para entrada/saída"""
+    """Motor de decisão automática com IA"""
     
-    def __init__(self):
-        self.min_confidence = 0.7  # 70% de confiança mínima
-        self.max_position_percent = 15  # Máximo 15% por trade
-        self.risk_reward_ratio = 2.0  # 1:2 mínimo
+    def __init__(self, ia_analyzer=None):
+        self.min_confidence = 0.7
+        self.max_position_percent = 20
+        self.risk_reward_ratio = 2.0
+        self.ia_analyzer = ia_analyzer
     
     def analyze_entry_signal(self, token_data: Dict, current_price: float) -> Dict:
-        """Analisa se deve entrar no trade"""
+        """Analisa se deve entrar no trade usando IA"""
         
-        # Simulação de análise IA
-        analysis_score = self._calculate_analysis_score(token_data)
+        # Usar IA se disponível
+        ia_analysis = None
+        if self.ia_analyzer:
+            ia_analysis = self.ia_analyzer.analyze_token(token_data)
+            confidence = ia_analysis.get('confidence_score', 0.5)
+            
+            if confidence >= self.min_confidence and ia_analysis.get('decision') == 'BUY':
+                # Usar parâmetros sugeridos pela IA
+                stop_loss_pct = ia_analysis.get('suggested_stop_loss_percent', -10)
+                take_profit_pct = ia_analysis.get('suggested_take_profit_percent', 20)
+                position_pct = ia_analysis.get('position_size_percent', 5)
+                
+                stop_loss = current_price * (1 + stop_loss_pct/100)
+                take_profit = current_price * (1 + take_profit_pct/100)
+                
+                return {
+                    'should_enter': True,
+                    'confidence': confidence,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'position_percent': min(position_pct, self.max_position_percent),
+                    'risk_reward': (take_profit - current_price) / (current_price - stop_loss),
+                    'ia_analysis': ia_analysis,
+                    'decision_type': 'IA_RECOMMENDED'
+                }
+        
+        # Fallback para análise técnica tradicional
+        analysis_score = self._calculate_technical_score(token_data)
         
         if analysis_score >= self.min_confidence:
-            # Calcular parâmetros do trade
-            stop_loss = current_price * 0.90  # -10%
-            take_profit = current_price * 1.20  # +20%
+            stop_loss = current_price * 0.90
+            take_profit = current_price * 1.20
             
-            # Calcular tamanho da posição baseado no score
             position_percent = min(
                 self.max_position_percent,
                 analysis_score * self.max_position_percent
@@ -247,18 +410,22 @@ class AutoDecisionEngine:
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
                 'position_percent': position_percent,
-                'risk_reward': (take_profit - current_price) / (current_price - stop_loss)
+                'risk_reward': (take_profit - current_price) / (current_price - stop_loss),
+                'ia_analysis': ia_analysis,
+                'decision_type': 'TECHNICAL'
             }
         
-        return {'should_enter': False, 'confidence': analysis_score}
+        return {
+            'should_enter': False, 
+            'confidence': analysis_score,
+            'ia_analysis': ia_analysis
+        }
     
-    def _calculate_analysis_score(self, token_data: Dict) -> float:
-        """Calcula score de análise (simulação)"""
+    def _calculate_technical_score(self, token_data: Dict) -> float:
+        """Calcula score técnico"""
         try:
-            # Fatores de análise
             factors = []
             
-            # 1. Volume
             volume = float(token_data.get('pairs', [{}])[0].get('volume', {}).get('h24', 0))
             if volume > 100000:
                 factors.append(0.8)
@@ -269,7 +436,6 @@ class AutoDecisionEngine:
             else:
                 factors.append(0.2)
             
-            # 2. Liquidez
             liquidity = float(token_data.get('pairs', [{}])[0].get('liquidity', {}).get('usd', 0))
             if liquidity > 50000:
                 factors.append(0.9)
@@ -280,16 +446,14 @@ class AutoDecisionEngine:
             else:
                 factors.append(0.3)
             
-            # 3. Variação recente
             price_change = float(token_data.get('pairs', [{}])[0].get('priceChange', {}).get('h24', 0))
-            if 5 < price_change < 30:  # Crescimento saudável
+            if 5 < price_change < 30:
                 factors.append(0.8)
             elif price_change > 0:
                 factors.append(0.6)
             else:
                 factors.append(0.4)
             
-            # 4. Relação compra/venda
             txns = token_data.get('pairs', [{}])[0].get('txns', {}).get('h24', {})
             buys = txns.get('buys', 1)
             sells = txns.get('sells', 1)
@@ -302,7 +466,6 @@ class AutoDecisionEngine:
             else:
                 factors.append(0.4)
             
-            # Score médio
             return round(np.mean(factors), 2)
             
         except:
@@ -315,8 +478,17 @@ class AutoDecisionEngine:
 if 'trade_monitor' not in st.session_state:
     st.session_state.trade_monitor = AutoTradeMonitor()
 
+if 'ia_analyzer' not in st.session_state:
+    # Configurar IA (escolha uma)
+    ia_type = "gemini"  # Ou "deepseek"
+    api_key = None  # Será configurado via interface
+    
+    st.session_state.ia_analyzer = IAAnalyzer(ia_type=ia_type, api_key=api_key)
+
 if 'decision_engine' not in st.session_state:
-    st.session_state.decision_engine = AutoDecisionEngine()
+    st.session_state.decision_engine = AutoDecisionEngine(
+        ia_analyzer=st.session_state.ia_analyzer
+    )
 
 if 'auto_trading' not in st.session_state:
     st.session_state.auto_trading = False
@@ -326,6 +498,9 @@ if 'balance' not in st.session_state:
 
 if 'token_watchlist' not in st.session_state:
     st.session_state.token_watchlist = []
+
+if 'price_history' not in st.session_state:
+    st.session_state.price_history = {}
 
 # ==========================================================
 # FUNÇÕES AUXILIARES
@@ -337,10 +512,24 @@ def fetch_token_data(ca: str) -> Optional[Dict]:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            # Adicionar CA aos dados
             if data.get('pairs'):
                 data['ca'] = ca
                 data['symbol'] = data['pairs'][0].get('baseToken', {}).get('symbol', 'TOKEN')
+                
+                # Atualizar histórico de preços
+                current_price = float(data['pairs'][0].get('priceUsd', 0))
+                if ca not in st.session_state.price_history:
+                    st.session_state.price_history[ca] = []
+                
+                st.session_state.price_history[ca].append({
+                    'time': datetime.now(),
+                    'price': current_price
+                })
+                
+                # Manter apenas últimos 100 preços
+                if len(st.session_state.price_history[ca]) > 100:
+                    st.session_state.price_history[ca] = st.session_state.price_history[ca][-100:]
+                
             return data
     except:
         pass
@@ -353,15 +542,50 @@ def get_current_price(ca: str) -> Optional[float]:
         return float(data['pairs'][0].get('priceUsd', 0))
     return None
 
+def get_price_history(ca: str) -> List[float]:
+    """Retorna histórico de preços"""
+    if ca in st.session_state.price_history:
+        return [item['price'] for item in st.session_state.price_history[ca]]
+    return []
+
 # ==========================================================
 # INTERFACE PRINCIPAL
 # ==========================================================
-st.title("🤖 SNIPER PRO AI - AUTO TRADER")
-st.markdown("### Sistema Automático com Saída Inteligente")
+st.title("🤖 SNIPER PRO AI - AUTO TRADER COM IA")
+st.markdown("### Sistema Inteligente com Análise de IA")
 
 # Sidebar
 with st.sidebar:
-    st.header("⚙️ CONTROLES")
+    st.header("⚙️ CONFIGURAÇÕES")
+    
+    # Configuração da IA
+    st.subheader("🧠 CONFIGURAÇÃO DA IA")
+    
+    ia_type = st.selectbox(
+        "Escolha o modelo de IA:",
+        ["gemini", "deepseek", "nenhum"],
+        index=0
+    )
+    
+    if ia_type != "nenhum":
+        api_key = st.text_input(
+            f"Chave API {ia_type.upper()}:",
+            type="password",
+            help=f"Obtenha em: {'ai.google.dev' if ia_type == 'gemini' else 'platform.deepseek.com'}"
+        )
+        
+        if api_key:
+            if 'ia_analyzer' not in st.session_state or st.session_state.ia_analyzer.ia_type != ia_type:
+                st.session_state.ia_analyzer = IAAnalyzer(
+                    ia_type=ia_type,
+                    api_key=api_key
+                )
+                st.session_state.decision_engine = AutoDecisionEngine(
+                    ia_analyzer=st.session_state.ia_analyzer
+                )
+                st.success(f"IA {ia_type.upper()} configurada!")
+    
+    st.divider()
     
     # Status do sistema
     stats = st.session_state.trade_monitor.get_performance_stats()
@@ -378,53 +602,39 @@ with st.sidebar:
     auto_mode = st.toggle("MODO AUTOMÁTICO", value=st.session_state.auto_trading)
     if auto_mode != st.session_state.auto_trading:
         st.session_state.auto_trading = auto_mode
-        if auto_mode:
-            st.success("Auto trading ATIVADO!")
-        else:
-            st.warning("Auto trading DESATIVADO!")
-    
-    st.divider()
-    
-    # Configurações
-    st.subheader("⚙️ CONFIGURAÇÕES")
-    
-    st.number_input("💰 SALDO INICIAL", value=1000.0, min_value=100.0, step=100.0, 
-                   key="initial_balance")
-    
-    st.slider("🎯 CONFIANÇA MÍNIMA (%)", 50, 95, 70, key="min_confidence")
-    st.slider("⚠️ STOP LOSS (%)", 5, 20, 10, key="stop_loss_percent")
-    st.slider("🚀 TAKE PROFIT (%)", 10, 50, 20, key="take_profit_percent")
-    st.slider("💰 POSIÇÃO MÁX (%)", 5, 30, 15, key="max_position_percent")
-    
-    st.divider()
-    
-    # Ações
-    if st.button("🔄 ATUALIZAR TUDO"):
         st.rerun()
     
-    if st.button("📊 EXPORTAR DADOS"):
+    # Configurações avançadas
+    st.divider()
+    st.subheader("⚙️ CONFIGURAÇÕES AVANÇADAS")
+    
+    st.slider("🎯 CONFIANÇA MÍNIMA IA (%)", 50, 95, 70, key="min_confidence")
+    st.slider("💰 POSIÇÃO MÁX (%)", 5, 30, 20, key="max_position_percent")
+    st.slider("⏱️ ATUALIZAÇÃO (seg)", 5, 60, 10, key="update_interval")
+    
+    st.divider()
+    
+    # Ações rápidas
+    if st.button("🔄 ATUALIZAR TUDO", use_container_width=True):
+        st.rerun()
+    
+    if st.button("📊 EXPORTAR DADOS", use_container_width=True):
         if st.session_state.trade_monitor.trade_history:
             df = pd.DataFrame(st.session_state.trade_monitor.trade_history)
             csv = df.to_csv(index=False)
             st.download_button(
                 label="⬇️ BAIXAR CSV",
                 data=csv,
-                file_name="trades_auto.csv",
+                file_name="trades_ia.csv",
                 mime="text/csv",
                 use_container_width=True
             )
     
-    if st.button("🧹 LIMPAR HISTÓRICO"):
-        st.session_state.trade_monitor.trade_history = []
-        st.session_state.trade_monitor.active_trades = []
-        st.session_state.trade_monitor.performance = {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'total_profit': 0.0,
-            'max_profit': 0.0,
-            'max_loss': 0.0
-        }
-        st.success("Histórico limpo!")
+    if st.button("🧹 LIMPAR TUDO", use_container_width=True):
+        st.session_state.trade_monitor = AutoTradeMonitor()
+        st.session_state.balance = 1000.0
+        st.session_state.token_watchlist = []
+        st.success("Sistema reiniciado!")
         st.rerun()
 
 # ==========================================================
@@ -449,9 +659,10 @@ with col_watch2:
                 'ca': new_token_ca.strip(),
                 'symbol': data.get('symbol', 'TOKEN'),
                 'last_price': float(data['pairs'][0].get('priceUsd', 0)),
-                'last_update': datetime.now()
+                'last_update': datetime.now(),
+                'ia_analysis': None
             }
-            # Verificar se já existe
+            
             if not any(t['ca'] == token_info['ca'] for t in st.session_state.token_watchlist):
                 st.session_state.token_watchlist.append(token_info)
                 st.success(f"Token {token_info['symbol']} adicionado!")
@@ -461,11 +672,11 @@ with col_watch2:
         else:
             st.error("Token não encontrado")
 
-# Mostrar watchlist
+# Mostrar watchlist com análise IA
 if st.session_state.token_watchlist:
     st.subheader("📊 TOKENS MONITORADOS")
     
-    # Atualizar preços
+    # Atualizar dados
     for token in st.session_state.token_watchlist:
         current_price = get_current_price(token['ca'])
         if current_price:
@@ -473,92 +684,148 @@ if st.session_state.token_watchlist:
             token['last_update'] = datetime.now()
     
     # Mostrar em colunas
-    cols = st.columns(min(5, len(st.session_state.token_watchlist)))
+    cols = st.columns(min(4, len(st.session_state.token_watchlist)))
     
-    for idx, token in enumerate(st.session_state.token_watchlist[:5]):
-        with cols[idx % 5]:
-            with st.container(border=True):
+    for idx, token in enumerate(st.session_state.token_watchlist[:8]):
+        with cols[idx % 4]:
+            with st.container(border=True, height=200):
                 st.markdown(f"**{token['symbol']}**")
                 st.markdown(f"`${token['last_price']:.10f}`")
                 st.caption(f"Última: {token['last_update'].strftime('%H:%M:%S')}")
                 
-                # Botão para análise rápida
-                if st.button("🧠 ANALISAR", key=f"analyze_{token['ca']}", use_container_width=True):
-                    st.session_state.selected_token_ca = token['ca']
-                    st.rerun()
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("🧠 IA", key=f"ia_{token['ca']}", use_container_width=True):
+                        # Executar análise IA
+                        data = fetch_token_data(token['ca'])
+                        if data and st.session_state.ia_analyzer:
+                            price_history = get_price_history(token['ca'])
+                            analysis = st.session_state.ia_analyzer.analyze_token(data, price_history)
+                            token['ia_analysis'] = analysis
+                            
+                            if analysis.get('decision') == 'BUY':
+                                st.success(f"✅ {analysis.get('confidence_score', 0)*100:.0f}% confiança")
+                            else:
+                                st.warning(f"⚠️ {analysis.get('reasoning', 'Sem análise')}")
+                
+                with col_btn2:
+                    if st.button("📈 Analisar", key=f"analyze_{token['ca']}", use_container_width=True):
+                        st.session_state.selected_token_ca = token['ca']
+                        st.rerun()
 
 # ==========================================================
-# SEÇÃO DE ANÁLISE E ENTRADA
+# SEÇÃO DE ANÁLISE DETALHADA COM IA
 # ==========================================================
 if 'selected_token_ca' in st.session_state and st.session_state.selected_token_ca:
-    st.header("🎯 ANÁLISE DE ENTRADA")
+    st.header("🎯 ANÁLISE DETALHADA COM IA")
     
     token_data = fetch_token_data(st.session_state.selected_token_ca)
     
     if token_data:
         current_price = float(token_data['pairs'][0].get('priceUsd', 0))
+        price_history = get_price_history(st.session_state.selected_token_ca)
         
-        col_analysis1, col_analysis2 = st.columns([2, 1])
+        col_analysis1, col_analysis2, col_analysis3 = st.columns([2, 1, 1])
         
         with col_analysis1:
-            # Análise automática
-            analysis = st.session_state.decision_engine.analyze_entry_signal(
-                token_data, current_price
-            )
-            
-            st.metric("💰 PREÇO ATUAL", f"${current_price:.10f}")
-            st.metric("🎯 CONFIANÇA", f"{analysis['confidence']*100:.1f}%")
-            
-            if analysis['should_enter']:
-                st.success("✅ SINAL DE COMPRA DETECTADO!")
+            # Análise IA
+            if st.session_state.ia_analyzer:
+                with st.spinner("Consultando IA..."):
+                    ia_analysis = st.session_state.ia_analyzer.analyze_token(token_data, price_history)
+                    
+                st.markdown(f"### 🧠 ANÁLISE DA IA")
+                
+                # Mostrar decisão
+                decision = ia_analysis.get('decision', 'HOLD')
+                confidence = ia_analysis.get('confidence_score', 0.5)
+                
+                if decision == 'BUY':
+                    st.success(f"✅ **COMPRAR** ({confidence*100:.1f}% confiança)")
+                elif decision == 'HOLD':
+                    st.info(f"⏸️ **MANTER** ({confidence*100:.1f}% confiança)")
+                else:
+                    st.error(f"❌ **EVITAR** ({confidence*100:.1f}% confiança)")
+                
+                st.markdown(f"**Razão:** {ia_analysis.get('reasoning', 'N/A')}")
+                st.markdown(f"**Nível de Risco:** {ia_analysis.get('risk_level', 'MEDIUM')}")
+                st.markdown(f"**Time Frame:** {ia_analysis.get('time_frame', 'SHORT')}")
                 
                 # Mostrar parâmetros sugeridos
-                st.info(f"""
-                **Parâmetros Sugeridos:**
-                • Stop Loss: ${analysis['stop_loss']:.10f} (-10%)
-                • Take Profit: ${analysis['take_profit']:.10f} (+20%)
-                • Tamanho Posição: {analysis['position_percent']:.1f}% do saldo
-                • Risk/Reward: 1:{analysis['risk_reward']:.1f}
-                """)
+                st.markdown("### ⚙️ PARÂMETROS SUGERIDOS")
                 
-                # Calcular valores
-                position_value = st.session_state.balance * (analysis['position_percent'] / 100)
+                stop_loss_pct = ia_analysis.get('suggested_stop_loss_percent', -10)
+                take_profit_pct = ia_analysis.get('suggested_take_profit_percent', 20)
+                position_pct = ia_analysis.get('position_size_percent', 5)
                 
-                # Botão de entrada manual
-                if st.button("🚀 ENTRAR COM PARÂMETROS SUGERIDOS", type="primary", use_container_width=True):
-                    # Criar trade
-                    trade = st.session_state.trade_monitor.create_trade(
-                        token_data=token_data,
-                        position_size=position_value,
-                        entry_price=current_price,
-                        stop_loss=analysis['stop_loss'],
-                        take_profit=analysis['take_profit']
-                    )
-                    
-                    st.session_state.balance -= position_value
-                    st.success(f"Trade iniciado para {token_data['symbol']}!")
-                    st.rerun()
-            
-            else:
-                st.warning(f"⚠️ NÃO ENTRAR - Confiança muito baixa ({analysis['confidence']*100:.1f}%)")
+                stop_loss_price = current_price * (1 + stop_loss_pct/100)
+                take_profit_price = current_price * (1 + take_profit_pct/100)
+                position_value = st.session_state.balance * (position_pct/100)
+                
+                col_metrics1, col_metrics2, col_metrics3 = st.columns(3)
+                
+                with col_metrics1:
+                    st.metric("⛔ Stop Loss", f"{stop_loss_pct}%", f"${stop_loss_price:.10f}")
+                
+                with col_metrics2:
+                    st.metric("🎯 Take Profit", f"{take_profit_pct}%", f"${take_profit_price:.10f}")
+                
+                with col_metrics3:
+                    st.metric("💰 Posição", f"{position_pct}%", f"${position_value:.2f}")
+                
+                # Botão de entrada com IA
+                if decision == 'BUY' and confidence >= 0.7:
+                    if st.button("🚀 ENTRAR COM RECOMENDAÇÃO DA IA", type="primary", use_container_width=True):
+                        trade = st.session_state.trade_monitor.create_trade(
+                            token_data=token_data,
+                            position_size=position_value,
+                            entry_price=current_price,
+                            stop_loss=stop_loss_price,
+                            take_profit=take_profit_price,
+                            ia_analysis=ia_analysis
+                        )
+                        
+                        st.session_state.balance -= position_value
+                        st.success(f"Trade iniciado com IA para {token_data['symbol']}!")
+                        st.rerun()
         
         with col_analysis2:
+            # Análise técnica tradicional
+            st.markdown("### 📊 ANÁLISE TÉCNICA")
+            
+            analysis = st.session_state.decision_engine.analyze_entry_signal(token_data, current_price)
+            
+            st.metric("💰 PREÇO", f"${current_price:.10f}")
+            st.metric("🎯 CONFIANÇA", f"{analysis['confidence']*100:.1f}%")
+            
+            if analysis['should_enter'] and analysis['decision_type'] == 'TECHNICAL':
+                st.info("📈 Sinal Técnico Positivo")
+        
+        with col_analysis3:
+            # Dados do token
+            st.markdown("### 📈 DADOS")
+            
+            volume = float(token_data.get('pairs', [{}])[0].get('volume', {}).get('h24', 0))
+            liquidity = float(token_data.get('pairs', [{}])[0].get('liquidity', {}).get('usd', 0))
+            price_change = float(token_data.get('pairs', [{}])[0].get('priceChange', {}).get('h24', 0))
+            
+            st.metric("📊 Volume 24h", f"${volume:,.0f}")
+            st.metric("💧 Liquidez", f"${liquidity:,.0f}")
+            st.metric("📈 Variação 24h", f"{price_change:.1f}%")
+            
             # Entrada manual
-            st.subheader("🎮 ENTRADA MANUAL")
+            st.divider()
+            st.markdown("### 🎮 ENTRADA MANUAL")
             
-            position_percent = st.slider("Tamanho da posição (%):", 1.0, 30.0, 10.0, 1.0)
-            stop_loss_percent = st.slider("Stop Loss (%):", 5.0, 30.0, 10.0, 1.0)
-            take_profit_percent = st.slider("Take Profit (%):", 10.0, 100.0, 20.0, 5.0)
+            manual_position = st.slider("Posição (%)", 1.0, 30.0, 10.0, 1.0)
+            manual_stop = st.slider("Stop Loss (%)", 5.0, 30.0, 10.0, 1.0)
+            manual_tp = st.slider("Take Profit (%)", 10.0, 100.0, 20.0, 5.0)
             
-            position_value = st.session_state.balance * (position_percent / 100)
-            stop_loss_price = current_price * (1 - stop_loss_percent/100)
-            take_profit_price = current_price * (1 + take_profit_percent/100)
-            
-            st.metric("💰 VALOR POSIÇÃO", f"${position_value:,.2f}")
-            st.metric("⚠️ STOP LOSS", f"${stop_loss_price:.10f}")
-            st.metric("🚀 TAKE PROFIT", f"${take_profit_price:.10f}")
-            
-            if st.button("🎯 ENTRAR MANUALMENTE", use_container_width=True):
+            if st.button("🎯 ENTRAR MANUAL", use_container_width=True):
+                position_value = st.session_state.balance * (manual_position/100)
+                stop_loss_price = current_price * (1 - manual_stop/100)
+                take_profit_price = current_price * (1 + manual_tp/100)
+                
                 trade = st.session_state.trade_monitor.create_trade(
                     token_data=token_data,
                     position_size=position_value,
@@ -568,7 +835,7 @@ if 'selected_token_ca' in st.session_state and st.session_state.selected_token_c
                 )
                 
                 st.session_state.balance -= position_value
-                st.success(f"Trade manual iniciado para {token_data['symbol']}!")
+                st.success(f"Trade manual para {token_data['symbol']}!")
                 st.rerun()
 
 # ==========================================================
@@ -576,9 +843,8 @@ if 'selected_token_ca' in st.session_state and st.session_state.selected_token_c
 # ==========================================================
 st.header("📈 TRADES ATIVOS")
 
-# Atualizar preços e verificar saídas
 if st.session_state.trade_monitor.active_trades:
-    # Atualizar todos os preços
+    # Atualizar preços
     for trade in st.session_state.trade_monitor.active_trades:
         current_price = get_current_price(trade['ca'])
         if current_price:
@@ -587,21 +853,18 @@ if st.session_state.trade_monitor.active_trades:
     # Executar saídas automáticas
     closed_trades = st.session_state.trade_monitor.execute_auto_exit()
     
-    # Mostrar trades fechados recentemente
+    # Mostrar trades fechados
     if closed_trades:
-        st.subheader("🔒 TRADES FECHADOS RECENTEMENTE")
-        for trade in closed_trades[-3:]:  # Mostrar últimos 3
-            profit_color = "green" if trade.get('final_profit_percent', 0) > 0 else "red"
+        st.subheader("🔒 TRADES FECHADOS")
+        for trade in closed_trades[-3:]:
+            profit_percent = trade.get('final_profit_percent', 0)
             
-            st.markdown(f"""
-            <div style='border: 2px solid {profit_color}; border-radius: 10px; padding: 10px; margin: 10px 0;'>
-                <strong>{trade.get('symbol', 'TOKEN')}</strong> - {trade.get('exit_reason', 'DESCONHECIDO')}<br>
-                Entrada: ${trade.get('entry_price', 0):.10f} | Saída: ${trade.get('exit_price', 0):.10f}<br>
-                <span style='color:{profit_color}; font-weight:bold;'>
-                    Resultado: {trade.get('final_profit_percent', 0):+.2f}% (${trade.get('final_profit_value', 0):+.2f})
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
+            st.info(f"""
+            **{trade.get('symbol', 'TOKEN')}** - {trade.get('exit_reason', 'DESCONHECIDO')}
+            • Entrada: ${trade.get('entry_price', 0):.10f}
+            • Saída: ${trade.get('exit_price', 0):.10f}
+            • Resultado: **{profit_percent:+.2f}%** (${trade.get('final_profit_value', 0):+.2f})
+            """)
             
             # Adicionar ao saldo
             st.session_state.balance += trade.get('position_size', 0) + trade.get('final_profit_value', 0)
@@ -611,35 +874,29 @@ if st.session_state.trade_monitor.active_trades:
     
     cols = st.columns(3)
     
-    for idx, trade in enumerate(st.session_state.trade_monitor.active_trades[:6]):  # Mostrar até 6
+    for idx, trade in enumerate(st.session_state.trade_monitor.active_trades[:6]):
         with cols[idx % 3]:
-            with st.container(border=True, height=250):
-                # Status
+            with st.container(border=True, height=280):
                 profit_percent = trade.get('current_profit_percent', 0)
-                profit_color = "green" if profit_percent >= 0 else "red"
+                profit_color = "🟢" if profit_percent >= 0 else "🔴"
                 
                 st.markdown(f"**{trade.get('symbol', 'TOKEN')}** (ID: {trade.get('id', '?')})")
-                st.markdown(f"<span style='color:{profit_color}; font-size:24px; font-weight:bold;'>{profit_percent:+.2f}%</span>", 
-                          unsafe_allow_html=True)
+                st.markdown(f"### {profit_color} {profit_percent:+.2f}%")
                 
                 # Informações
-                st.caption(f"Entrada: ${trade.get('entry_price', 0):.10f}")
-                st.caption(f"Atual: ${trade.get('current_price', 0):.10f}")
-                
-                # Stop Loss e Take Profit
+                st.caption(f"💰 Entrada: ${trade.get('entry_price', 0):.10f}")
+                st.caption(f"📊 Atual: ${trade.get('current_price', 0):.10f}")
                 st.caption(f"⛔ Stop: ${trade.get('stop_loss', 0):.10f}")
-                st.caption(f"🎯 Take Profit: ${trade.get('take_profit', 0):.10f}")
+                st.caption(f"🎯 TP: ${trade.get('take_profit', 0):.10f}")
+                
+                if trade.get('ia_analysis'):
+                    st.caption(f"🧠 IA: {trade['ia_analysis'].get('risk_level', 'N/A')}")
                 
                 if trade.get('trailing_stop_activated', False):
-                    st.caption(f"📊 Trailing Stop: ${trade.get('trailing_stop_price', 0):.10f}")
+                    st.caption(f"📈 Trailing: ${trade.get('trailing_stop_price', 0):.10f}")
                 
-                # Máximo atingido
-                if trade.get('max_profit_percent', 0) > 0:
-                    st.caption(f"📈 Máximo: {trade.get('max_profit_percent', 0):+.2f}%")
-                
-                # Botão de saída manual
-                if st.button("⏹️ SAIR MANUAL", key=f"exit_{trade.get('id', '?')}", use_container_width=True):
-                    # Fechar trade manualmente
+                # Botões de ação
+                if st.button("⏹️ SAIR", key=f"exit_{trade.get('id', '?')}", use_container_width=True):
                     current_price = get_current_price(trade.get('ca', ''))
                     if current_price:
                         profit_percent = ((current_price - trade.get('entry_price', 0)) / trade.get('entry_price', 1)) * 100
@@ -656,13 +913,13 @@ if st.session_state.trade_monitor.active_trades:
                         st.session_state.trade_monitor.active_trades.remove(trade)
                         
                         st.session_state.balance += trade.get('position_size', 0) + profit_value
-                        st.success(f"Trade fechado manualmente: {profit_percent:+.2f}%")
+                        st.success(f"Trade fechado: {profit_percent:+.2f}%")
                         st.rerun()
 else:
     st.info("Nenhum trade ativo no momento.")
 
 # ==========================================================
-# SEÇÃO DE HISTÓRICO E ESTATÍSTICAS - VERSÃO CORRIGIDA
+# SEÇÃO DE HISTÓRICO E ESTATÍSTICAS
 # ==========================================================
 st.header("📊 HISTÓRICO E ESTATÍSTICAS")
 
@@ -689,7 +946,6 @@ with col_stats4:
 if st.session_state.trade_monitor.trade_history:
     df_history = pd.DataFrame(st.session_state.trade_monitor.trade_history)
     
-    # Gráfico de lucro acumulado
     if not df_history.empty and 'final_profit_value' in df_history.columns:
         df_history['cumulative_profit'] = df_history['final_profit_value'].cumsum()
         
@@ -703,90 +959,67 @@ if st.session_state.trade_monitor.trade_history:
         ))
         
         fig.update_layout(
-            title='Lucro Acumulado ao Longo do Tempo',
+            title='Lucro Acumulado',
             xaxis_title='Número do Trade',
-            yaxis_title='Lucro Acumulado ($)',
+            yaxis_title='Lucro ($)',
             height=400
         )
         
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Tabela de histórico
-        st.subheader("📜 ÚLTIMOS TRADES")
-        
-        # Filtrar colunas que existem
-        available_columns = [col for col in ['symbol', 'exit_reason', 'entry_price', 'exit_price', 'final_profit_percent'] 
-                           if col in df_history.columns]
-        
-        if available_columns:
-            recent_trades = df_history[available_columns].tail(10).sort_index(ascending=False)
-            
-            for _, trade in recent_trades.iterrows():
-                profit_percent = trade.get('final_profit_percent', 0)
-                profit_color = "🟢" if profit_percent > 0 else "🔴"
-                
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.text(f"{trade.get('symbol', 'TOKEN')} - {trade.get('exit_reason', 'DESCONHECIDO')}")
-                
-                with col2:
-                    st.text(f"Entrada: ${trade.get('entry_price', 0):.8f}")
-                    st.text(f"Saída: ${trade.get('exit_price', 0):.8f}")
-                
-                with col3:
-                    st.markdown(f"**{profit_color} {profit_percent:+.2f}%**")
 
 # ==========================================================
-# SISTEMA DE AUTO TRADING
+# SISTEMA DE AUTO TRADING COM IA
 # ==========================================================
 if st.session_state.auto_trading and st.session_state.token_watchlist:
     st.header("🤖 AUTO TRADING ATIVO")
     
-    # Processar cada token na watchlist
+    st.info(f"Monitorando {len(st.session_state.token_watchlist)} tokens...")
+    
     for token in st.session_state.token_watchlist:
-        # Verificar se já tem trade ativo para este token
-        active_trade_for_token = any(
+        # Verificar se já tem trade ativo
+        active_trade = any(
             t.get('ca') == token.get('ca') and t.get('status') == 'ACTIVE' 
             for t in st.session_state.trade_monitor.active_trades
         )
         
-        if not active_trade_for_token:
-            # Analisar entrada
-            token_data = fetch_token_data(token.get('ca', ''))
-            if token_data:
-                current_price = get_current_price(token.get('ca', ''))
-                if current_price:
-                    analysis = st.session_state.decision_engine.analyze_entry_signal(
-                        token_data, current_price
-                    )
-                    
-                    if analysis['should_enter']:
+        if not active_trade:
+            # Analisar com IA
+            data = fetch_token_data(token.get('ca', ''))
+            if data and st.session_state.ia_analyzer:
+                price_history = get_price_history(token.get('ca', ''))
+                analysis = st.session_state.ia_analyzer.analyze_token(data, price_history)
+                
+                if analysis.get('decision') == 'BUY' and analysis.get('confidence_score', 0) >= 0.7:
+                    current_price = get_current_price(token.get('ca', ''))
+                    if current_price:
                         # Calcular posição
-                        position_percent = analysis['position_percent']
-                        position_value = st.session_state.balance * (position_percent / 100)
+                        position_pct = analysis.get('position_size_percent', 5)
+                        position_value = st.session_state.balance * (position_pct / 100)
                         
-                        # Criar trade automaticamente
                         if position_value > 1:  # Mínimo $1
+                            stop_loss_pct = analysis.get('suggested_stop_loss_percent', -10)
+                            take_profit_pct = analysis.get('suggested_take_profit_percent', 20)
+                            
+                            stop_loss = current_price * (1 + stop_loss_pct/100)
+                            take_profit = current_price * (1 + take_profit_pct/100)
+                            
                             trade = st.session_state.trade_monitor.create_trade(
-                                token_data=token_data,
+                                token_data=data,
                                 position_size=position_value,
                                 entry_price=current_price,
-                                stop_loss=analysis['stop_loss'],
-                                take_profit=analysis['take_profit']
+                                stop_loss=stop_loss,
+                                take_profit=take_profit,
+                                ia_analysis=analysis
                             )
                             
                             st.session_state.balance -= position_value
-                            st.success(f"🤖 Auto trade iniciado para {token.get('symbol', 'TOKEN')}!")
-    
-    st.info(f"Monitorando {len(st.session_state.token_watchlist)} tokens...")
+                            st.success(f"🤖 Auto trade para {token.get('symbol', 'TOKEN')}!")
 
 # ==========================================================
 # ATUALIZAÇÃO AUTOMÁTICA
 # ==========================================================
 if st.session_state.auto_trading or st.session_state.trade_monitor.active_trades:
-    # Atualizar a cada 10 segundos
-    time.sleep(10)
+    time.sleep(st.session_state.get('update_interval', 10))
     st.rerun()
 
 # ==========================================================
@@ -796,46 +1029,18 @@ st.divider()
 footer_col1, footer_col2, footer_col3 = st.columns(3)
 
 with footer_col1:
-    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"🔄 {datetime.now().strftime('%H:%M:%S')}")
 
 with footer_col2:
     active_trades = len(st.session_state.trade_monitor.active_trades)
-    st.caption(f"📈 Trades ativos: {active_trades}")
+    st.caption(f"📈 {active_trades} trades ativos")
 
 with footer_col3:
-    st.caption("🤖 Sniper Pro Auto Trader v1.0")
+    st.caption("🤖 Sniper Pro AI Trader v2.0")
 
 # ==========================================================
 # CSS
 # ==========================================================
-# ==========================================================
-# ATUALIZAÇÃO AUTOMÁTICA
-# ==========================================================
-if st.session_state.auto_trading or st.session_state.trade_monitor.active_trades:
-    # Atualizar a cada 10 segundos
-    time.sleep(10)
-    st.rerun()
-
-# ==========================================================
-# FOOTER
-# ==========================================================
-st.divider()
-footer_col1, footer_col2, footer_col3 = st.columns(3)
-
-with footer_col1:
-    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%H:%M:%S')}")
-
-with footer_col2:
-    active_trades = len(st.session_state.trade_monitor.active_trades)
-    st.caption(f"📈 Trades ativos: {active_trades}")
-
-with footer_col3:
-    st.caption("🤖 Sniper Pro Auto Trader v1.0")
-
-# ==========================================================
-# CSS
-# ==========================================================
-# CSS simplificado para testar
 st.markdown("""
 <style>
     .stButton > button:hover {
