@@ -808,6 +808,9 @@ with footer_col3:
 # ==========================================================
 # CSS
 # ==========================================================
+/* ========================================================== */
+/* CSS */
+/* ========================================================== */
 st.markdown("""
 <style>
     /* Botões de ação */
@@ -819,4 +822,49 @@ st.markdown("""
     
     .stButton > button:hover {
         transform: scale(1.02);
-        box-shadow: 0 4px 12
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    /* Métricas */
+    .stMetric {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 15px;
+        border-left: 4px solid #4CAF50;
+    }
+    
+    /* Containers com borda */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+    }
+    
+    /* Status colors */
+    .green-status {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .red-status {
+        color: #dc3545;
+        font-weight: bold;
+    }
+    
+    /* Tabelas */
+    .stDataFrame {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    /* Ajustes de layout */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #f8f9fa;
+    }
+</style>
+""", unsafe_allow_html=True)
