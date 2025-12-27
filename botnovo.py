@@ -808,6 +808,33 @@ with footer_col3:
 # ==========================================================
 # CSS
 # ==========================================================
+# ==========================================================
+# ATUALIZAÇÃO AUTOMÁTICA
+# ==========================================================
+if st.session_state.auto_trading or st.session_state.trade_monitor.active_trades:
+    # Atualizar a cada 10 segundos
+    time.sleep(10)
+    st.rerun()
+
+# ==========================================================
+# FOOTER
+# ==========================================================
+st.divider()
+footer_col1, footer_col2, footer_col3 = st.columns(3)
+
+with footer_col1:
+    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%H:%M:%S')}")
+
+with footer_col2:
+    active_trades = len(st.session_state.trade_monitor.active_trades)
+    st.caption(f"📈 Trades ativos: {active_trades}")
+
+with footer_col3:
+    st.caption("🤖 Sniper Pro Auto Trader v1.0")
+
+# ==========================================================
+# CSS
+# ==========================================================
 st.markdown("""
 <style>
     /* Botões de ação */
