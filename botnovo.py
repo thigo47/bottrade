@@ -1,184 +1,159 @@
 import streamlit as st
-import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import requests
+import time
+import json
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
+from typing import Dict, List, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
 
-# ========== CONFIGURAÇÃO ==========
+# ==========================================================
+# CONFIGURAÇÃO
+# ==========================================================
 st.set_page_config(
-    page_title="Sniper AI Trader Pro",
+    page_title="Sniper Pro AI - Auto Trader",
     page_icon="🤖",
     layout="wide"
 )
 
-st.title("🤖 SNIPER AI TRADER PRO")
-st.markdown("### Sistema de Análise Inteligente - **100% GRATUITO**")
-
-# ========== INICIALIZAÇÃO ==========
-if 'saldo' not in st.session_state:
-    st.session_state.saldo = 1000.0
+# ==========================================================
+# SISTEMA DE ANÁLISE INTELIGENTE
+# ==========================================================
+class AnalisadorInteligente:
+    """Sistema de análise automática para decisão de trades"""
     
-if 'trades' not in st.session_state:
-    st.session_state.trades = []
+    def __init__(self):
+        self.parametros = {
+            'volume_minimo': 50000,      # $50k mínimo
+            'liquidez_minima': 20000,    # $20k mínimo
+            'var_ideal_min': 5,          # 5% mínimo
+            'var_ideal_max': 30,         # 30% máximo (evita pump)
+            'buy_ratio_min': 0.6,        # 60% compras mínimo
+            'confianca_minima': 70       # 70% confiança mínima
+        }
     
-if 'historico' not in st.session_state:
-    st.session_state.historico = []
-
-# ========== SIDEBAR ==========
-with st.sidebar:
-    st.header("💰 STATUS")
-    
-    st.metric("SALDO ATUAL", f"${st.session_state.saldo:,.2f}")
-    st.metric("TRADES ATIVOS", len(st.session_state.trades))
-    st.metric("LUCRO TOTAL", f"${sum(t.get('lucro', 0) for t in st.session_state.historico):+,.2f}")
-    
-    st.divider()
-    
-    st.header("⚙️ CONFIGURAÇÕES")
-    
-    st.slider("Confiança mínima", 60, 95, 75, key="min_conf")
-    st.slider("Stop Loss (%)", 5, 20, 10, key="stop_loss")
-    st.slider("Take Profit (%)", 15, 50, 25, key="take_profit")
-    st.slider("Posição máxima (%)", 5, 30, 15, key="max_pos")
-    
-    st.divider()
-    
-    if st.button("🔄 ATUALIZAR TUDO", use_container_width=True):
-        st.rerun()
-    
-    if st.button("🧹 LIMPAR TUDO", use_container_width=True):
-        st.session_state.trades = []
-        st.session_state.saldo = 1000.0
-        st.session_state.historico = []
-        st.success("Reiniciado!")
-        st.rerun()
-
-# ========== SISTEMA DE ANÁLISE INTELIGENTE ==========
-class AnalisadorIA:
-    """Sistema de análise inteligente sem API externa"""
-    
-    def analisar_token(self, token_data):
-        """Analisa token usando lógica inteligente"""
+    def analisar_token(self, token_data: Dict) -> Dict:
+        """Analisa token e retorna decisão completa"""
         try:
-            pair = token_data['pairs'][0]
+            pair = token_data.get('pairs', [{}])[0]
             
-            # Extrair dados
+            # Dados básicos
             symbol = pair.get('baseToken', {}).get('symbol', 'TOKEN')
             price = float(pair.get('priceUsd', 0))
             volume_24h = float(pair.get('volume', {}).get('h24', 0))
             liquidity = float(pair.get('liquidity', {}).get('usd', 0))
-            price_change = float(pair.get('priceChange', {}).get('h24', 0))
+            price_change_24h = float(pair.get('priceChange', {}).get('h24', 0))
             
-            # Análise de transações
+            # Dados de transações
             txns = pair.get('txns', {}).get('h24', {})
             buys = txns.get('buys', 0)
             sells = txns.get('sells', 0)
-            buy_ratio = buys / max(buys + sells, 1)
+            buy_ratio = buys / (buys + sells) if (buys + sells) > 0 else 0
             
             # Calcula score (0-100)
             score = 0
+            fatores = []
             
-            # 1. Análise de Volume (0-30 pontos)
+            # 1. Volume (0-30 pontos)
             if volume_24h > 100000:
                 score += 30
-                vol_status = "📈 VOLUME ALTO"
+                fatores.append("📈 Volume alto (>100k)")
             elif volume_24h > 50000:
                 score += 20
-                vol_status = "📊 VOLUME BOM"
-            elif volume_24h > 20000:
+                fatores.append("📊 Volume bom (>50k)")
+            elif volume_24h > self.parametros['volume_minimo']:
                 score += 10
-                vol_status = "📉 VOLUME RAZOÁVEL"
+                fatores.append("📉 Volume mínimo aceitável")
             else:
-                vol_status = "⚠️ VOLUME BAIXO"
+                fatores.append("❌ Volume insuficiente")
             
-            # 2. Análise de Liquidez (0-25 pontos)
+            # 2. Liquidez (0-25 pontos)
             if liquidity > 50000:
                 score += 25
-                liq_status = "💧 LIQUIDEZ EXCELENTE"
+                fatores.append("💧 Liquidez excelente")
             elif liquidity > 20000:
                 score += 15
-                liq_status = "💦 LIQUIDEZ BOA"
-            elif liquidity > 5000:
+                fatores.append("💦 Liquidez boa")
+            elif liquidity > self.parametros['liquidez_minima']:
                 score += 5
-                liq_status = "💧 LIQUIDEZ ACEITÁVEL"
+                fatores.append("💧 Liquidez mínima aceitável")
             else:
-                liq_status = "⚠️ LIQUIDEZ BAIXA"
+                fatores.append("❌ Liquidez insuficiente")
             
-            # 3. Análise de Tendência (0-20 pontos)
-            if 5 < price_change < 30:
+            # 3. Variação de preço (0-20 pontos)
+            if self.parametros['var_ideal_min'] < price_change_24h < self.parametros['var_ideal_max']:
                 score += 20
-                trend_status = "🚀 CRESCIMENTO SAUDÁVEL"
-            elif price_change > 30:
+                fatores.append(f"🚀 Crescimento saudável ({price_change_24h:.1f}%)")
+            elif price_change_24h > 0:
                 score += 10
-                trend_status = "⚡ ALTA FORTE (cuidado com pump)"
-            elif price_change > 0:
+                fatores.append(f"📈 Em alta ({price_change_24h:.1f}%)")
+            elif price_change_24h > -10:
                 score += 5
-                trend_status = "📈 EM ALTA"
+                fatores.append(f"📉 Leve queda ({price_change_24h:.1f}%)")
             else:
-                trend_status = "📉 EM QUEDA"
+                fatores.append(f"❌ Queda acentuada ({price_change_24h:.1f}%)")
             
-            # 4. Análise de Compras/Vendas (0-15 pontos)
+            # 4. Relação compra/venda (0-15 pontos)
             if buy_ratio > 0.7:
                 score += 15
-                txn_status = "🟢 MAIS COMPRAS (bullish)"
-            elif buy_ratio > 0.5:
-                score += 8
-                txn_status = "🟡 EQUILÍBRIO"
-            else:
-                txn_status = "🔴 MAIS VENDAS (bearish)"
-            
-            # 5. Análise de Price Impact (0-10 pontos)
-            price_impact = pair.get('priceChange', {}).get('m5', 0)
-            if isinstance(price_impact, (int, float)) and abs(price_impact) < 5:
+                fatores.append(f"🟢 Forte demanda ({buy_ratio*100:.0f}% compras)")
+            elif buy_ratio > self.parametros['buy_ratio_min']:
                 score += 10
-                impact_status = "⚖️ ESTÁVEL"
+                fatores.append(f"🟡 Demanda positiva ({buy_ratio*100:.0f}% compras)")
             else:
-                impact_status = "🎢 VOLÁTIL"
+                fatores.append(f"🔴 Mais vendas ({buy_ratio*100:.0f}% compras)")
             
-            # Determinar decisão baseada no score
+            # 5. Dados adicionais (0-10 pontos)
+            price_impact = pair.get('priceChange', {}).get('m5', 0)
+            if isinstance(price_impact, (int, float)) and abs(price_impact) < 3:
+                score += 10
+                fatores.append("⚖️ Estável (baixo impacto)")
+            else:
+                fatores.append("🎢 Volátil")
+            
+            # Determinar decisão
+            confianca = min(95, max(30, score))
+            
             if score >= 70:
                 decisao = "COMPRAR"
-                cor = "🟢"
-                confianca = min(95, 70 + (score - 70))
-                razao = f"Score alto ({score}/100) - {vol_status}, {liq_status}"
                 risco = "BAIXO"
-                stop_loss = -8
-                take_profit = 30
+                stop_loss = -8  # -8%
+                take_profit = 30  # +30%
+                cor = "🟢"
                 
             elif score >= 50:
-                decisao = "ESPERAR"
-                cor = "🟡"
-                confianca = 50 + (score - 50)
-                razao = f"Score moderado ({score}/100) - {trend_status}"
+                decisao = "AGUARDAR"
                 risco = "MÉDIO"
-                stop_loss = -10
-                take_profit = 25
+                stop_loss = -10  # -10%
+                take_profit = 25  # +25%
+                cor = "🟡"
                 
             else:
                 decisao = "EVITAR"
-                cor = "🔴"
-                confianca = max(30, score)
-                razao = f"Score baixo ({score}/100) - {txn_status}, {impact_status}"
                 risco = "ALTO"
-                stop_loss = -12
-                take_profit = 20
+                stop_loss = -12  # -12%
+                take_profit = 20  # +20%
+                cor = "🔴"
             
             return {
                 'decisao': decisao,
                 'cor': cor,
                 'confianca': confianca,
                 'score': score,
-                'razao': razao,
                 'risco': risco,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'detalhes': {
-                    'volume_status': vol_status,
-                    'liquidez_status': liq_status,
-                    'tendencia_status': trend_status,
-                    'transacoes_status': txn_status,
-                    'impacto_status': impact_status
+                'stop_loss_percent': stop_loss,
+                'take_profit_percent': take_profit,
+                'fatores': fatores,
+                'dados': {
+                    'symbol': symbol,
+                    'price': price,
+                    'volume': volume_24h,
+                    'liquidez': liquidity,
+                    'variacao': price_change_24h,
+                    'buy_ratio': buy_ratio
                 }
             }
             
@@ -188,14 +163,218 @@ class AnalisadorIA:
                 'cor': '⚫',
                 'confianca': 0,
                 'score': 0,
-                'razao': f'Erro na análise: {str(e)[:50]}',
                 'risco': 'ALTO',
-                'stop_loss': -10,
-                'take_profit': 20
+                'stop_loss_percent': -10,
+                'take_profit_percent': 20,
+                'fatores': [f"Erro na análise: {str(e)[:50]}"],
+                'dados': {}
             }
 
-# ========== FUNÇÕES ==========
-def buscar_token(ca):
+# ==========================================================
+# SISTEMA DE TRADING AUTOMÁTICO
+# ==========================================================
+class AutoTrader:
+    """Sistema automático de execução de trades"""
+    
+    def __init__(self, saldo_inicial: float = 1000.0):
+        self.saldo = saldo_inicial
+        self.trades_ativos = []
+        self.historico_trades = []
+        self.estatisticas = {
+            'total_trades': 0,
+            'trades_vencedores': 0,
+            'trades_perdedores': 0,
+            'lucro_total': 0.0,
+            'maior_lucro': 0.0,
+            'maior_perda': 0.0,
+            'win_rate': 0.0
+        }
+        self.max_trades_simultaneos = 10
+        self.posicao_por_trade_percent = 10  # 10% por trade
+    
+    def calcular_posicao_trade(self) -> float:
+        """Calcula valor para cada trade proporcionalmente"""
+        num_trades_ativos = len(self.trades_ativos)
+        
+        if num_trades_ativos >= self.max_trades_simultaneos:
+            return 0.0
+        
+        # Distribui igualmente entre trades disponíveis
+        trades_disponiveis = self.max_trades_simultaneos - num_trades_ativos
+        valor_por_trade = (self.saldo * (self.posicao_por_trade_percent / 100)) / trades_disponiveis
+        
+        return max(valor_por_trade, 1.0)  # Mínimo $1
+    
+    def criar_trade_automatico(self, token_data: Dict, analise: Dict) -> Optional[Dict]:
+        """Cria trade automaticamente se análise for positiva"""
+        
+        if analise['decisao'] != 'COMPRAR':
+            return None
+        
+        if analise['confianca'] < 70:
+            return None
+        
+        # Verificar se já existe trade ativo para este token
+        for trade in self.trades_ativos:
+            if trade['ca'] == token_data.get('ca'):
+                return None
+        
+        # Calcular valor do trade
+        valor_trade = self.calcular_posicao_trade()
+        
+        if valor_trade <= 0 or valor_trade > self.saldo:
+            return None
+        
+        # Dados do token
+        price = analise['dados']['price']
+        stop_loss = price * (1 + analise['stop_loss_percent'] / 100)
+        take_profit = price * (1 + analise['take_profit_percent'] / 100)
+        
+        # Criar trade
+        trade = {
+            'id': len(self.historico_trades) + 1,
+            'symbol': analise['dados']['symbol'],
+            'ca': token_data.get('ca'),
+            'entry_price': price,
+            'current_price': price,
+            'position_size': valor_trade,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'status': 'ACTIVE',
+            'entry_time': datetime.now(),
+            'analise': analise,
+            'profit_percent': 0.0,
+            'profit_value': 0.0,
+            'exit_price': None,
+            'exit_time': None,
+            'exit_reason': None,
+            'trailing_stop': stop_loss
+        }
+        
+        # Deduzir do saldo
+        self.saldo -= valor_trade
+        self.trades_ativos.append(trade)
+        
+        return trade
+    
+    def atualizar_trades(self):
+        """Atualiza preços e executa saídas automáticas"""
+        trades_fechados = []
+        
+        for trade in self.trades_ativos[:]:
+            # Buscar preço atual
+            try:
+                url = f"https://api.dexscreener.com/latest/dex/tokens/{trade['ca']}"
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('pairs'):
+                        current_price = float(data['pairs'][0].get('priceUsd', 0))
+                        trade['current_price'] = current_price
+                        
+                        # Calcular PnL
+                        profit_percent = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+                        profit_value = trade['position_size'] * (profit_percent / 100)
+                        
+                        trade['profit_percent'] = profit_percent
+                        trade['profit_value'] = profit_value
+                        
+                        # Verificar condições de saída
+                        if self.verificar_saida_trade(trade):
+                            self.fechar_trade(trade, trades_fechados)
+            except:
+                continue
+        
+        return trades_fechados
+    
+    def verificar_saida_trade(self, trade: Dict) -> bool:
+        """Verifica se trade deve ser fechado"""
+        current_price = trade['current_price']
+        
+        # TAKE PROFIT
+        if current_price >= trade['take_profit']:
+            trade['exit_reason'] = 'TAKE_PROFIT'
+            return True
+        
+        # STOP LOSS
+        if current_price <= trade['stop_loss']:
+            trade['exit_reason'] = 'STOP_LOSS'
+            return True
+        
+        # TRAILING STOP (ativa após 15% de gain)
+        if trade['profit_percent'] >= 15:
+            new_trailing = current_price * 0.85  # Mantém 15% do lucro
+            if new_trailing > trade['trailing_stop']:
+                trade['trailing_stop'] = new_trailing
+            
+            if current_price <= trade['trailing_stop']:
+                trade['exit_reason'] = 'TRAILING_STOP'
+                return True
+        
+        return False
+    
+    def fechar_trade(self, trade: Dict, trades_fechados: List):
+        """Fecha trade e atualiza estatísticas"""
+        trade['status'] = 'CLOSED'
+        trade['exit_price'] = trade['current_price']
+        trade['exit_time'] = datetime.now()
+        
+        # Adicionar lucro/perda ao saldo
+        self.saldo += trade['position_size'] + trade['profit_value']
+        
+        # Atualizar estatísticas
+        self.estatisticas['total_trades'] += 1
+        
+        if trade['profit_value'] > 0:
+            self.estatisticas['trades_vencedores'] += 1
+            self.estatisticas['lucro_total'] += trade['profit_value']
+            self.estatisticas['maior_lucro'] = max(self.estatisticas['maior_lucro'], trade['profit_value'])
+        else:
+            self.estatisticas['trades_perdedores'] += 1
+            self.estatisticas['lucro_total'] += trade['profit_value']
+            self.estatisticas['maior_perda'] = min(self.estatisticas['maior_perda'], trade['profit_value'])
+        
+        # Calcular win rate
+        total = self.estatisticas['trades_vencedores'] + self.estatisticas['trades_perdedores']
+        if total > 0:
+            self.estatisticas['win_rate'] = (self.estatisticas['trades_vencedores'] / total) * 100
+        
+        # Mover para histórico
+        self.historico_trades.append(trade.copy())
+        self.trades_ativos.remove(trade)
+        trades_fechados.append(trade)
+    
+    def get_estatisticas(self) -> Dict:
+        """Retorna estatísticas atualizadas"""
+        return {
+            'saldo': self.saldo,
+            'trades_ativos': len(self.trades_ativos),
+            'trades_total': self.estatisticas['total_trades'],
+            'win_rate': round(self.estatisticas['win_rate'], 2),
+            'lucro_total': round(self.estatisticas['lucro_total'], 2),
+            'maior_lucro': round(self.estatisticas['maior_lucro'], 2),
+            'maior_perda': round(self.estatisticas['maior_perda'], 2)
+        }
+
+# ==========================================================
+# INICIALIZAÇÃO DO STREAMLIT
+# ==========================================================
+if 'trader' not in st.session_state:
+    st.session_state.trader = AutoTrader(saldo_inicial=1000.0)
+
+if 'analisador' not in st.session_state:
+    st.session_state.analisador = AnalisadorInteligente()
+
+if 'auto_mode' not in st.session_state:
+    st.session_state.auto_mode = False
+
+if 'monitorando' not in st.session_state:
+    st.session_state.monitorando = []
+
+# ==========================================================
+# FUNÇÕES AUXILIARES
+# ==========================================================
+def buscar_token(ca: str) -> Optional[Dict]:
     """Busca dados do token"""
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
@@ -203,331 +382,556 @@ def buscar_token(ca):
         if response.status_code == 200:
             data = response.json()
             if data.get('pairs'):
-                # Adicionar CA aos dados
                 data['ca'] = ca
                 return data
     except:
         pass
     return None
 
-def criar_trade(token_data, analise, posicao_percent):
-    """Cria um novo trade"""
-    try:
-        pair = token_data['pairs'][0]
-        price = float(pair.get('priceUsd', 0))
-        
-        # Calcular valores
-        valor_posicao = st.session_state.saldo * (posicao_percent / 100)
-        stop_loss = price * (1 + analise['stop_loss']/100)
-        take_profit = price * (1 + analise['take_profit']/100)
-        
-        trade = {
-            'id': len(st.session_state.trades) + 1,
-            'symbol': pair.get('baseToken', {}).get('symbol', 'TOKEN'),
-            'ca': token_data.get('ca', ''),
-            'entry_price': price,
-            'current_price': price,
-            'position_size': valor_posicao,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'status': 'ACTIVE',
-            'entry_time': datetime.now(),
-            'analise': analise,
-            'lucro_percent': 0.0,
-            'lucro_valor': 0.0
-        }
-        
-        st.session_state.trades.append(trade)
-        st.session_state.saldo -= valor_posicao
-        
-        return trade
-        
-    except:
-        return None
+# ==========================================================
+# INTERFACE PRINCIPAL
+# ==========================================================
+st.title("🤖 SNIPER PRO AI - AUTO TRADER PROFISSIONAL")
+st.markdown("### Sistema Automático de Trading com Análise Inteligente")
 
-# ========== INTERFACE PRINCIPAL ==========
-st.header("🔍 ANALISAR TOKEN")
+# ==========================================================
+# SIDEBAR - CONTROLES E CONFIGURAÇÕES
+# ==========================================================
+with st.sidebar:
+    st.header("💰 CONTROLE DE SALDO")
+    
+    # Editor de saldo
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        novo_saldo = st.number_input(
+            "Definir Saldo ($)",
+            min_value=100.0,
+            max_value=1000000.0,
+            value=float(st.session_state.trader.saldo),
+            step=100.0
+        )
+    
+    with col_s2:
+        if st.button("💾 ATUALIZAR", use_container_width=True):
+            st.session_state.trader.saldo = novo_saldo
+            st.success(f"Saldo atualizado: ${novo_saldo:,.2f}")
+            st.rerun()
+    
+    st.divider()
+    
+    # Estatísticas
+    stats = st.session_state.trader.get_estatisticas()
+    
+    st.metric("💵 SALDO ATUAL", f"${stats['saldo']:,.2f}")
+    st.metric("📊 WIN RATE", f"{stats['win_rate']:.1f}%")
+    st.metric("💰 LUCRO TOTAL", f"${stats['lucro_total']:+,.2f}")
+    st.metric("📈 TRADES ATIVOS", stats['trades_ativos'])
+    
+    st.divider()
+    
+    # Configurações do sistema
+    st.header("⚙️ CONFIGURAÇÕES")
+    
+    st.session_state.auto_mode = st.toggle(
+        "🤖 MODO AUTOMÁTICO",
+        value=st.session_state.auto_mode,
+        help="Analisa e executa trades automaticamente"
+    )
+    
+    st.number_input(
+        "🎯 CONFIANÇA MÍNIMA (%)",
+        min_value=50,
+        max_value=95,
+        value=70,
+        key="conf_minima"
+    )
+    
+    st.slider(
+        "📊 TAMANHO POSIÇÃO/TOTAL (%)",
+        min_value=1,
+        max_value=20,
+        value=10,
+        key="pos_size_percent"
+    )
+    
+    st.number_input(
+        "🔢 MÁX. TRADES SIMULTÂNEOS",
+        min_value=1,
+        max_value=20,
+        value=10,
+        key="max_trades"
+    )
+    
+    st.divider()
+    
+    # Ações rápidas
+    if st.button("🔄 ATUALIZAR TRADES", use_container_width=True):
+        fechados = st.session_state.trader.atualizar_trades()
+        if fechados:
+            st.success(f"{len(fechados)} trades atualizados!")
+        st.rerun()
+    
+    if st.button("📊 EXPORTAR DADOS", use_container_width=True):
+        if st.session_state.trader.historico_trades:
+            df = pd.DataFrame(st.session_state.trader.historico_trades)
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="⬇️ BAIXAR CSV",
+                data=csv,
+                file_name="trades_historico.csv",
+                mime="text/csv"
+            )
+    
+    if st.button("🧹 LIMPAR TUDO", type="secondary", use_container_width=True):
+        st.session_state.trader = AutoTrader(saldo_inicial=1000.0)
+        st.session_state.monitorando = []
+        st.success("Sistema reiniciado!")
+        st.rerun()
 
-# Input para token
-col1, col2 = st.columns([3, 1])
-with col1:
-    ca = st.text_input(
+# ==========================================================
+# SEÇÃO 1: ANALISAR E ADICIONAR TOKENS
+# ==========================================================
+st.header("🔍 ANALISAR TOKEN PARA TRADE")
+
+col_input1, col_input2 = st.columns([3, 1])
+
+with col_input1:
+    token_ca = st.text_input(
         "Cole o CA do token:",
         placeholder="0x...",
-        key="token_input"
+        key="input_token_ca",
+        help="Cole o Contract Address do token que deseja analisar"
     )
-with col2:
-    btn_analisar = st.button("🔎 ANALISAR", type="primary", use_container_width=True)
 
-if ca and btn_analisar:
+with col_input2:
+    btn_analisar = st.button(
+        "🔎 ANALISAR",
+        type="primary",
+        use_container_width=True,
+        disabled=not token_ca
+    )
+
+if token_ca and btn_analisar:
     with st.spinner("Analisando token..."):
-        token_data = buscar_token(ca)
+        token_data = buscar_token(token_ca.strip())
         
         if token_data:
-            pair = token_data['pairs'][0]
+            # Analisar token
+            analise = st.session_state.analisador.analisar_token(token_data)
             
-            # Mostrar dados básicos
-            st.subheader("📊 DADOS DO TOKEN")
+            # Mostrar resultado da análise
+            st.subheader(f"📋 ANÁLISE: {analise['dados'].get('symbol', 'TOKEN')}")
             
-            col_a, col_b, col_c, col_d = st.columns(4)
+            # Status da análise
+            col_status1, col_status2, col_status3 = st.columns(3)
             
-            with col_a:
-                price = float(pair.get('priceUsd', 0))
-                st.metric("💰 Preço", f"${price:.10f}")
+            with col_status1:
+                st.metric(
+                    "🎯 DECISÃO", 
+                    analise['decisao'],
+                    delta=f"{analise['confianca']:.0f}% confiança"
+                )
             
-            with col_b:
-                volume = float(pair.get('volume', {}).get('h24', 0))
-                st.metric("📊 Volume 24h", f"${volume:,.0f}")
+            with col_status2:
+                st.metric("📊 SCORE", f"{analise['score']}/100")
             
-            with col_c:
-                liquidity = float(pair.get('liquidity', {}).get('usd', 0))
-                st.metric("💧 Liquidez", f"${liquidity:,.0f}")
+            with col_status3:
+                st.metric("⚠️ RISCO", analise['risco'])
             
-            with col_d:
-                change = float(pair.get('priceChange', {}).get('h24', 0))
-                st.metric("📈 Variação 24h", f"{change:.1f}%")
+            # Dados do token
+            st.subheader("📈 DADOS DO TOKEN")
             
-            st.divider()
+            col_data1, col_data2, col_data3, col_data4 = st.columns(4)
             
-            # Análise inteligente
-            st.subheader("🧠 ANÁLISE INTELIGENTE")
+            with col_data1:
+                st.metric("💰 Preço", f"${analise['dados']['price']:.10f}")
             
-            analisador = AnalisadorIA()
-            analise = analisador.analisar_token(token_data)
+            with col_data2:
+                st.metric("📊 Volume", f"${analise['dados']['volume']:,.0f}")
             
-            # Mostrar resultado
-            col_x, col_y = st.columns(2)
+            with col_data3:
+                st.metric("💧 Liquidez", f"${analise['dados']['liquidez']:,.0f}")
             
-            with col_x:
-                st.markdown(f"### {analise['cor']} {analise['decisao']}")
-                st.markdown(f"**Confiança:** {analise['confianca']:.0f}%")
-                st.markdown(f"**Score:** {analise['score']}/100")
-                st.markdown(f"**Risco:** {analise['risco']}")
-                st.markdown(f"**Razão:** {analise['razao']}")
+            with col_data4:
+                st.metric("📈 Variação", f"{analise['dados']['variacao']:.1f}%")
             
-            with col_y:
-                # Calcular parâmetros
-                sl_price = price * (1 + analise['stop_loss']/100)
-                tp_price = price * (1 + analise['take_profit']/100)
-                
-                st.metric("⛔ Stop Loss", f"{analise['stop_loss']}%", f"${sl_price:.10f}")
-                st.metric("🎯 Take Profit", f"+{analise['take_profit']}%", f"${tp_price:.10f}")
-                
-                # Risk/Reward
-                rr = abs(analise['take_profit'] / analise['stop_loss'])
+            # Fatores da análise
+            with st.expander("📋 VER DETALHES DA ANÁLISE"):
+                for fator in analise['fatores']:
+                    st.write(f"• {fator}")
+            
+            # Parâmetros sugeridos
+            st.subheader("⚙️ PARÂMETROS SUGERIDOS")
+            
+            price = analise['dados']['price']
+            stop_price = price * (1 + analise['stop_loss_percent'] / 100)
+            tp_price = price * (1 + analise['take_profit_percent'] / 100)
+            
+            col_param1, col_param2, col_param3 = st.columns(3)
+            
+            with col_param1:
+                st.metric(
+                    "⛔ Stop Loss", 
+                    f"{analise['stop_loss_percent']}%",
+                    f"${stop_price:.10f}"
+                )
+            
+            with col_param2:
+                st.metric(
+                    "🎯 Take Profit",
+                    f"+{analise['take_profit_percent']}%",
+                    f"${tp_price:.10f}"
+                )
+            
+            with col_param3:
+                rr = abs(analise['take_profit_percent'] / analise['stop_loss_percent'])
                 st.metric("📈 Risk/Reward", f"1:{rr:.1f}")
             
-            # Detalhes da análise
-            with st.expander("📋 VER DETALHES DA ANÁLISE"):
-                for chave, valor in analise['detalhes'].items():
-                    st.write(f"**{chave.replace('_', ' ').title()}:** {valor}")
+            # Botão para adicionar à lista de monitoramento
+            if analise['decisao'] == 'COMPRAR' and analise['confianca'] >= st.session_state.get('conf_minima', 70):
+                st.success("✅ TOKEN APROVADO PARA TRADE!")
+                
+                # Verificar se já está sendo monitorado
+                ja_monitorando = any(m['ca'] == token_data['ca'] for m in st.session_state.monitorando)
+                
+                if not ja_monitorando:
+                    if st.button("➕ ADICIONAR À LISTA DE TRADES", type="primary", use_container_width=True):
+                        st.session_state.monitorando.append({
+                            'ca': token_data['ca'],
+                            'symbol': analise['dados']['symbol'],
+                            'analise': analise,
+                            'adicionado_em': datetime.now(),
+                            'ultima_analise': datetime.now()
+                        })
+                        st.success(f"✅ {analise['dados']['symbol']} adicionado à lista!")
+                        st.rerun()
+                else:
+                    st.info("ℹ️ Este token já está na lista de monitoramento")
             
-            # Ação recomendada
-            st.divider()
-            
-            if analise['decisao'] == 'COMPRAR' and analise['confianca'] >= st.session_state.get('min_conf', 70):
-                st.success("✅ **SINAL DE COMPRA FORTE DETECTADO!**")
-                
-                # Controles para entrada
-                col_p1, col_p2, col_p3 = st.columns([2, 1, 1])
-                
-                with col_p1:
-                    max_pos = st.session_state.get('max_pos', 15)
-                    posicao = st.slider(
-                        "Tamanho da posição (% do saldo):",
-                        1.0, float(max_pos), 5.0, 0.5
-                    )
-                
-                with col_p2:
-                    valor_posicao = st.session_state.saldo * (posicao / 100)
-                    st.metric("💰 Valor", f"${valor_posicao:.2f}")
-                
-                with col_p3:
-                    if st.button("🚀 ENTRAR NO TRADE", type="primary", use_container_width=True):
-                        trade = criar_trade(token_data, analise, posicao)
-                        if trade:
-                            st.balloons()
-                            st.success(f"✅ Trade iniciado para {trade['symbol']}!")
-                            st.rerun()
-                        else:
-                            st.error("❌ Erro ao criar trade")
-            
-            elif analise['decisao'] == 'ESPERAR':
-                st.warning("⚠️ **AGUARDAR MELHOR OPORTUNIDADE**")
-                st.info("O token não atingiu os critérios mínimos para entrada.")
+            elif analise['decisao'] == 'AGUARDAR':
+                st.warning("⚠️ AGUARDAR MELHOR OPORTUNIDADE")
             
             else:
-                st.error("❌ **EVITAR ESTE TOKEN**")
-                st.warning("Recomendação: Procure outras oportunidades.")
+                st.error("❌ EVITAR ESTE TOKEN")
         
         else:
             st.error("❌ Token não encontrado. Verifique o CA.")
 
-# ========== TOKENS PARA TESTE ==========
-st.divider()
-st.header("🎯 TOKENS PARA TESTE")
-
-col_t1, col_t2, col_t3, col_t4 = st.columns(4)
-
-with col_t1:
-    if st.button("💰 ETH", use_container_width=True):
-        st.session_state.token_input = "0x2170Ed0880ac9A755fd29B2688956BD959F933F8"
-        st.rerun()
-
-with col_t2:
-    if st.button("🔥 BNB", use_container_width=True):
-        st.session_state.token_input = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"
-        st.rerun()
-
-with col_t3:
-    if st.button("💎 USDC", use_container_width=True):
-        st.session_state.token_input = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
-        st.rerun()
-
-with col_t4:
-    if st.button("🦄 UNI", use_container_width=True):
-        st.session_state.token_input = "0xBf5140A22578168FD562DCcF235E5D43A02ce9B1"
-        st.rerun()
-
-# ========== TRADES ATIVOS ==========
-if st.session_state.trades:
-    st.divider()
-    st.header("📈 TRADES ATIVOS")
+# ==========================================================
+# SEÇÃO 2: TOKENS MONITORADOS
+# ==========================================================
+if st.session_state.monitorando:
+    st.header("📋 TOKENS NA LISTA DE TRADES")
     
-    # Atualizar preços
-    for trade in st.session_state.trades:
-        if trade['status'] == 'ACTIVE':
-            token_data = buscar_token(trade['ca'])
+    # Atualizar análises
+    for token in st.session_state.monitorando[:]:
+        try:
+            token_data = buscar_token(token['ca'])
             if token_data:
-                current_price = float(token_data['pairs'][0].get('priceUsd', 0))
-                trade['current_price'] = current_price
-                trade['lucro_percent'] = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
-                trade['lucro_valor'] = trade['position_size'] * (trade['lucro_percent'] / 100)
+                analise = st.session_state.analisador.analisar_token(token_data)
+                token['analise'] = analise
+                token['ultima_analise'] = datetime.now()
+        except:
+            continue
     
-    # Mostrar trades
+    # Mostrar tokens monitorados
+    for idx, token in enumerate(st.session_state.monitorando):
+        analise = token['analise']
+        
+        with st.container(border=True):
+            col_t1, col_t2, col_t3, col_t4 = st.columns([2, 1, 1, 1])
+            
+            with col_t1:
+                st.markdown(f"**{token['symbol']}**")
+                st.caption(f"`{token['ca'][:20]}...`")
+                st.caption(f"Adicionado: {token['adicionado_em'].strftime('%H:%M')}")
+            
+            with col_t2:
+                st.markdown(f"{analise['cor']} **{analise['decisao']}**")
+                st.caption(f"{analise['confianca']:.0f}% confiança")
+            
+            with col_t3:
+                st.metric("Score", f"{analise['score']}/100")
+            
+            with col_t4:
+                if st.button("🗑️ REMOVER", key=f"remove_{idx}", use_container_width=True):
+                    st.session_state.monitorando.pop(idx)
+                    st.rerun()
+
+# ==========================================================
+# SEÇÃO 3: TRADES ATIVOS
+# ==========================================================
+st.header("📈 TRADES ATIVOS")
+
+# Atualizar trades ativos
+trades_fechados = st.session_state.trader.atualizar_trades()
+
+# Mostrar trades recentemente fechados
+if trades_fechados:
+    st.subheader("🔒 TRADES FECHADOS RECENTEMENTE")
+    
+    for trade in trades_fechados[-3:]:  # Últimos 3
+        profit_color = "🟢" if trade['profit_value'] >= 0 else "🔴"
+        
+        with st.container(border=True):
+            col_c1, col_c2, col_c3 = st.columns([2, 2, 1])
+            
+            with col_c1:
+                st.markdown(f"**{trade['symbol']}** - {trade['exit_reason']}")
+                st.caption(f"Entrada: ${trade['entry_price']:.10f}")
+                st.caption(f"Saída: ${trade['exit_price']:.10f}")
+            
+            with col_c2:
+                st.caption(f"Duração: {(trade['exit_time'] - trade['entry_time']).seconds // 60} min")
+                st.caption(f"Valor: ${trade['position_size']:.2f}")
+            
+            with col_c3:
+                st.markdown(f"**{profit_color} {trade['profit_percent']:+.2f}%**")
+                st.markdown(f"**${trade['profit_value']:+.2f}**")
+
+# Mostrar trades ativos
+if st.session_state.trader.trades_ativos:
+    st.subheader("🟢 TRADES EM ANDAMENTO")
+    
     cols = st.columns(3)
     
-    for idx, trade in enumerate(st.session_state.trades[:6]):
+    for idx, trade in enumerate(st.session_state.trader.trades_ativos[:9]):  # Máximo 9 por linha
         with cols[idx % 3]:
-            with st.container(border=True, height=280):
-                lucro = trade['lucro_percent']
-                cor = "🟢" if lucro >= 0 else "🔴"
+            with st.container(border=True, height=250):
+                # Cabeçalho
+                profit = trade['profit_percent']
+                profit_color = "green" if profit >= 0 else "red"
                 
                 st.markdown(f"**{trade['symbol']}** (ID: {trade['id']})")
-                st.markdown(f"### {cor} {lucro:+.2f}%")
+                st.markdown(f"<span style='color:{profit_color}; font-size:24px; font-weight:bold;'>{profit:+.2f}%</span>", 
+                          unsafe_allow_html=True)
                 
                 # Informações
                 st.caption(f"💰 Entrada: ${trade['entry_price']:.10f}")
                 st.caption(f"📊 Atual: ${trade['current_price']:.10f}")
                 st.caption(f"⛔ Stop: ${trade['stop_loss']:.10f}")
                 st.caption(f"🎯 TP: ${trade['take_profit']:.10f}")
+                st.caption(f"💵 Valor: ${trade['position_size']:.2f}")
                 
-                # Botão de saída
-                if st.button(f"⏹️ SAIR {trade['symbol']}", key=f"exit_{trade['id']}", use_container_width=True):
-                    # Fechar trade
-                    trade['status'] = 'CLOSED'
-                    trade['exit_time'] = datetime.now()
-                    trade['exit_price'] = trade['current_price']
-                    
-                    # Adicionar ao histórico
-                    st.session_state.historico.append(trade.copy())
-                    
-                    # Retornar dinheiro ao saldo
-                    st.session_state.saldo += trade['position_size'] + trade['lucro_valor']
-                    
-                    # Remover dos ativos
-                    st.session_state.trades = [t for t in st.session_state.trades if t['id'] != trade['id']]
-                    
-                    st.success(f"Trade fechado: {lucro:+.2f}%")
+                # Botão de saída manual
+                if st.button("⏹️ SAIR MANUAL", key=f"manual_exit_{trade['id']}", use_container_width=True):
+                    # Forçar fechamento
+                    trade['exit_reason'] = 'MANUAL'
+                    st.session_state.trader.fechar_trade(trade, [])
+                    st.success(f"Trade {trade['symbol']} fechado manualmente!")
                     st.rerun()
+else:
+    st.info("📭 Nenhum trade ativo no momento.")
 
-# ========== HISTÓRICO ==========
-if st.session_state.historico:
-    st.divider()
-    st.header("📋 HISTÓRICO DE TRADES")
+# ==========================================================
+# SEÇÃO 4: SISTEMA DE TRADING AUTOMÁTICO
+# ==========================================================
+if st.session_state.auto_mode and st.session_state.monitorando:
+    st.header("🤖 SISTEMA AUTOMÁTICO ATIVO")
     
-    for trade in st.session_state.historico[-5:]:  # Últimos 5
-        lucro = trade['lucro_percent']
-        cor = "🟢" if lucro >= 0 else "🔴"
+    # Verificar tokens monitorados para entrada
+    for token in st.session_state.monitorando:
+        analise = token['analise']
         
-        st.write(f"{cor} **{trade['symbol']}** - {lucro:+.2f}% (${trade['lucro_valor']:+.2f})")
+        if analise['decisao'] == 'COMPRAR' and analise['confianca'] >= st.session_state.get('conf_minima', 70):
+            # Buscar dados atualizados
+            token_data = buscar_token(token['ca'])
+            if token_data:
+                # Tentar criar trade automático
+                trade = st.session_state.trader.criar_trade_automatico(token_data, analise)
+                
+                if trade:
+                    st.success(f"🤖 Trade automático iniciado para {trade['symbol']}!")
+    
+    st.info(f"🔄 Monitorando {len(st.session_state.monitorando)} tokens...")
+    
+    # Auto-refresh
+    time.sleep(5)
+    st.rerun()
 
-# ========== CSS ==========
+# ==========================================================
+# SEÇÃO 5: ESTATÍSTICAS E GRÁFICOS
+# ==========================================================
+st.header("📊 ESTATÍSTICAS DO SISTEMA")
+
+stats = st.session_state.trader.get_estatisticas()
+
+col_stat1, col_stat2, col_stat3, col_stat4, col_stat5 = st.columns(5)
+
+with col_stat1:
+    st.metric("💵 SALDO", f"${stats['saldo']:,.2f}")
+
+with col_stat2:
+    st.metric("📊 WIN RATE", f"{stats['win_rate']:.1f}%")
+
+with col_stat3:
+    st.metric("💰 LUCRO TOTAL", f"${stats['lucro_total']:+,.2f}")
+
+with col_stat4:
+    st.metric("📈 TRADES ATIVOS", stats['trades_ativos'])
+
+with col_stat5:
+    st.metric("🔢 TOTAL TRADES", stats['trades_total'])
+
+# Gráfico de performance
+if st.session_state.trader.historico_trades:
+    df = pd.DataFrame(st.session_state.trader.historico_trades)
+    
+    if 'profit_value' in df.columns:
+        df['lucro_acumulado'] = df['profit_value'].cumsum()
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df['lucro_acumulado'],
+            mode='lines+markers',
+            name='Lucro Acumulado',
+            line=dict(color='green', width=3)
+        ))
+        
+        fig.update_layout(
+            title='Desempenho dos Trades',
+            xaxis_title='Número do Trade',
+            yaxis_title='Lucro Acumulado ($)',
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================================
+# FOOTER
+# ==========================================================
+st.divider()
+
+footer_col1, footer_col2, footer_col3 = st.columns(3)
+
+with footer_col1:
+    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%H:%M:%S')}")
+
+with footer_col2:
+    st.caption(f"📋 Tokens monitorados: {len(st.session_state.monitorando)}")
+
+with footer_col3:
+    if st.session_state.auto_mode:
+        st.caption("🤖 AUTO: 🟢 ATIVO")
+    else:
+        st.caption("🤖 AUTO: 🔴 INATIVO")
+
+# ==========================================================
+# CSS PARA INTERFACE PROFISSIONAL
+# ==========================================================
 st.markdown("""
 <style>
-    /* Interface mobile-first */
+    /* Interface profissional */
     .stButton > button {
-        width: 100%;
-        height: 50px;
-        font-size: 16px;
+        border-radius: 8px;
         font-weight: bold;
-        border-radius: 10px;
-        margin: 5px 0;
-        transition: all 0.3s;
+        transition: all 0.3s ease;
+        border: none;
     }
     
     .stButton > button:hover {
-        transform: scale(1.02);
+        transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
     
-    /* Botões coloridos */
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border: none;
         color: white;
     }
     
-    /* Inputs grandes */
-    .stTextInput input {
-        height: 55px;
-        font-size: 16px;
-        border-radius: 10px;
+    .stButton > button[kind="secondary"] {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
     }
     
-    /* Títulos */
-    h1, h2, h3 {
-        color: #1E3A8A;
-        margin-top: 1rem;
-    }
-    
-    /* Cards de trade */
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 15px;
+    /* Inputs elegantes */
+    .stTextInput > div > div > input {
+        border-radius: 8px;
         border: 2px solid #e0e0e0;
-        padding: 15px;
-        margin: 10px 0;
+        transition: all 0.3s;
+    }
+    
+    .stTextInput > div > div > input:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    /* Métricas destacadas */
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem;
+        font-weight: bold;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        font-size: 0.9rem;
+        color: #666;
+    }
+    
+    /* Containers com sombra */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 12px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        padding: 20px;
+        margin-bottom: 20px;
         background: white;
     }
     
-    /* Status colors */
-    .success-card {
-        border-left: 5px solid #28a745;
+    /* Títulos gradientes */
+    h1, h2, h3 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-top: 1.5rem;
     }
     
-    .warning-card {
-        border-left: 5px solid #ffc107;
+    /* Sidebar moderna */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
     }
     
-    .danger-card {
-        border-left: 5px solid #dc3545;
+    /* Divider personalizado */
+    hr {
+        margin: 2rem 0;
+        border: none;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #667eea, transparent);
     }
     
-    /* Ajuste para mobile */
+    /* Cards de trade */
+    .trade-card {
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+        border-left: 4px solid;
+        background: white;
+    }
+    
+    .trade-buy {
+        border-left-color: #28a745;
+        background: linear-gradient(90deg, rgba(40, 167, 69, 0.1) 0%, white 100%);
+    }
+    
+    .trade-sell {
+        border-left-color: #dc3545;
+        background: linear-gradient(90deg, rgba(220, 53, 69, 0.1) 0%, white 100%);
+    }
+    
+    /* Responsividade mobile */
     @media (max-width: 768px) {
         .stButton > button {
-            height: 45px;
             font-size: 14px;
+            padding: 8px 16px;
         }
         
-        .stTextInput input {
-            height: 45px;
-            font-size: 14px;
+        [data-testid="stMetricValue"] {
+            font-size: 1.4rem;
         }
         
-        h1 { font-size: 24px; }
-        h2 { font-size: 20px; }
-        h3 { font-size: 18px; }
+        h1 { font-size: 1.8rem; }
+        h2 { font-size: 1.5rem; }
+        h3 { font-size: 1.2rem; }
     }
 </style>
 """, unsafe_allow_html=True)
