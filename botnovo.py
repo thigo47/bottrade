@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # CONFIGURAÇÃO
 # ==========================================================
 st.set_page_config(
-    page_title="🔥 SNIPER AI - BOT AGRESSIVO",
+    page_title="🔥 SNIPER AI - BOT ULTRA AGRESSIVO",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -28,13 +28,9 @@ class AnalisadorAgressivo:
     
     def __init__(self):
         self.parametros = {
-            'volume_minimo': 10000,      # $10k mínimo (baixo para entrar rápido)
-            'liquidez_minima': 5000,     # $5k mínimo (mais agressivo)
-            'var_aceitavel_min': -15,    # Aceita até -15% (tolerante a quedas)
-            'var_aceitavel_max': 50,     # Aceita até +50% (caça pumps)
-            'buy_ratio_min': 0.45,       # 45% compras mínimo (muito baixo)
-            'confianca_minima': 60,      # 60% já entra
-            'timeframe_rapido': True     # Foca em variações rápidas
+            'volume_minimo': 10000,
+            'liquidez_minima': 5000,
+            'confianca_minima': 60,
         }
     
     def analisar_token(self, token_data: Dict) -> Dict:
@@ -42,32 +38,28 @@ class AnalisadorAgressivo:
         try:
             pair = token_data.get('pairs', [{}])[0]
             
-            # Dados básicos
             symbol = pair.get('baseToken', {}).get('symbol', 'TOKEN')
             price = float(pair.get('priceUsd', 0))
             volume_24h = float(pair.get('volume', {}).get('h24', 0))
             liquidity = float(pair.get('liquidity', {}).get('usd', 0))
             price_change_24h = float(pair.get('priceChange', {}).get('h24', 0))
-            
-            # Dados de minutos (para análise rápida)
             price_change_5m = float(pair.get('priceChange', {}).get('m5', 0))
             price_change_1h = float(pair.get('priceChange', {}).get('h1', 0))
             
-            # Dados de transações
             txns = pair.get('txns', {}).get('h24', {})
             buys = txns.get('buys', 0)
             sells = txns.get('sells', 0)
             buy_ratio = buys / (buys + sells) if (buys + sells) > 0 else 0
             
-            # Score AGREGADO (0-150) - Mais fatores
+            # Score calculado
             score = 0
             fatores = []
             
-            # 1. VOLATILIDADE (0-40 pontos) - Quanto mais volátil, melhor para day trade
+            # Volatilidade
             volatilidade = abs(price_change_5m) + abs(price_change_1h)
             if volatilidade > 20:
                 score += 40
-                fatores.append("⚡ VOLATILIDADE EXTREMA (ótimo para scalp)")
+                fatores.append("⚡ VOLATILIDADE EXTREMA")
             elif volatilidade > 10:
                 score += 30
                 fatores.append("🔥 Alta volatilidade")
@@ -78,98 +70,51 @@ class AnalisadorAgressivo:
                 score += 10
                 fatores.append("📊 Volatilidade baixa")
             
-            # 2. MOMENTUM DE CURTO PRAZO (0-30 pontos)
+            # Momentum
             momentum = (price_change_5m * 3) + (price_change_1h * 1)
             if momentum > 15:
                 score += 30
-                fatores.append(f"🚀 FORTE MOMENTUM ({momentum:.1f} pontos)")
+                fatores.append(f"🚀 FORTE MOMENTUM")
             elif momentum > 5:
                 score += 20
                 fatores.append(f"📈 Momentum positivo")
-            elif momentum > -5:
+            else:
                 score += 10
                 fatores.append(f"⚖️ Neutro")
-            else:
-                score += 5
-                fatores.append(f"📉 Momentum negativo")
             
-            # 3. VOLUME RELATIVO (0-25 pontos) - Aceita baixo volume
+            # Volume
             if volume_24h > 50000:
                 score += 25
                 fatores.append("📈 Volume alto")
             elif volume_24h > 20000:
                 score += 20
                 fatores.append("📊 Volume bom")
-            elif volume_24h > self.parametros['volume_minimo']:
-                score += 15
-                fatores.append("📉 Volume mínimo")
             else:
-                score += 5
-                fatores.append("⚠️ Volume muito baixo")
-            
-            # 4. LIQUIDEZ (0-20 pontos) - Aceita baixa liquidez
-            if liquidity > 20000:
-                score += 20
-                fatores.append("💧 Liquidez boa")
-            elif liquidity > 10000:
-                score += 15
-                fatores.append("💦 Liquidez razoável")
-            elif liquidity > self.parametros['liquidez_minima']:
                 score += 10
-                fatores.append("💧 Liquidez mínima")
-            else:
-                score += 5
-                fatores.append("⚠️ Liquidez muito baixa")
+                fatores.append("📉 Volume baixo")
             
-            # 5. SENTIMENTO DE COMPRA (0-15 pontos) - Aceita ratio baixo
-            if buy_ratio > 0.6:
-                score += 15
-                fatores.append(f"🟢 COMPRAS FORTES ({buy_ratio*100:.0f}%)")
-            elif buy_ratio > 0.4:
-                score += 10
-                fatores.append(f"🟡 Compras moderadas")
-            else:
-                score += 5
-                fatores.append(f"🔴 Mais vendas (oportunidade?)")
+            # Determinar decisão
+            confianca = min(95, max(40, score * 0.7))
             
-            # 6. PREÇO BAIXO (0-20 pontos) - Tokens baratos têm mais chance de pump
-            if price < 0.000001:
-                score += 20
-                fatores.append("💰 PREÇO MUITO BAIXO (alto potencial)")
-            elif price < 0.00001:
-                score += 15
-                fatores.append("💎 Preço baixo")
-            elif price < 0.0001:
-                score += 10
-                fatores.append("📊 Preço médio")
-            else:
-                score += 5
-                fatores.append("📈 Preço alto")
-            
-            # DETERMINAR DECISÃO (AGRESSSIVA)
-            confianca = min(95, max(40, score * 0.7))  # Converte score 0-150 para 0-95
-            
-            if score >= 80:  # Baixa exigência
+            if score >= 80:
                 decisao = "COMPRAR AGORA"
                 risco = "MÉDIO-ALTO"
-                stop_loss = -3  # STOP TIGHT: -3%
-                take_profit = 8  # TP CURTO: +8%
+                stop_loss = -3
+                take_profit = 8
                 cor = "🟢"
                 agressividade = "MAXIMA"
-                
             elif score >= 50:
                 decisao = "COMPRAR"
                 risco = "ALTO"
-                stop_loss = -5  # -5%
-                take_profit = 12  # +12%
+                stop_loss = -5
+                take_profit = 12
                 cor = "🟡"
                 agressividade = "ALTA"
-                
             else:
                 decisao = "MONITORAR"
                 risco = "MUITO ALTO"
-                stop_loss = -8  # -8%
-                take_profit = 15  # +15%
+                stop_loss = -8
+                take_profit = 15
                 cor = "🔴"
                 agressividade = "MODERADA"
             
@@ -182,7 +127,7 @@ class AnalisadorAgressivo:
                 'agressividade': agressividade,
                 'stop_loss_percent': stop_loss,
                 'take_profit_percent': take_profit,
-                'timeframe': 'ULTRA-CURTO (1-15min)',
+                'timeframe': 'ULTRA-CURTO',
                 'fatores': fatores,
                 'dados': {
                     'symbol': symbol,
@@ -209,7 +154,7 @@ class AnalisadorAgressivo:
                 'stop_loss_percent': -5,
                 'take_profit_percent': 10,
                 'timeframe': 'RÁPIDO',
-                'fatores': [f"Entrada agressiva: {str(e)[:30]}"],
+                'fatores': [f"Entrada agressiva"],
                 'dados': {}
             }
 
@@ -225,8 +170,8 @@ class BotAgressivo:
         self.historico_trades = []
         self.estatisticas = {
             'total_trades': 0,
-            'trades_vencedores': 0,
-            'trades_perdedores': 0,
+            'trades_ganhos': 0,
+            'trades_perdidos': 0,
             'lucro_total': 0.0,
             'maior_lucro': 0.0,
             'maior_perda': 0.0,
@@ -236,84 +181,73 @@ class BotAgressivo:
         }
         
         # PARÂMETROS AGRESSIVOS
-        self.max_trades_simultaneos = 20  # MUITOS trades ao mesmo tempo
-        self.posicao_por_trade_percent = 15  # 15% por trade
-        self.stop_loss_tight = True  # Stops apertados
-        self.take_profit_agressivo = True  # TPs curtos
-        self.reentrar_perdas = True  # Reentra após stop
-        self.trailing_stop_agressivo = True  # Trailing stop ativo
+        self.max_trades_simultaneos = 20
+        self.posicao_por_trade_percent = 15
+        self.stop_loss_tight = True
+        self.take_profit_agressivo = True
+        self.reentrar_perdas = True
+        self.trailing_stop_agressivo = True
         
-        # CONTROLE DE RISCO (ajustes automáticos)
-        self.risk_multiplier = 1.0  # Multiplicador de risco
+        # CONTROLE DE RISCO
+        self.risk_multiplier = 1.0
         self.last_trade_time = None
-        self.consecutive_losses = 0
+        self.perdas_consecutivas = 0
         
     def calcular_posicao_trade(self) -> float:
-        """Calcula valor para cada trade - DISTRIBUIÇÃO AGRESSIVA"""
+        """Calcula valor para cada trade"""
         num_trades_ativos = len(self.trades_ativos)
         
-        # Se já tem muitos trades, reduz tamanho mas ainda entra
         if num_trades_ativos >= self.max_trades_simultaneos * 0.8:
-            valor_por_trade = (self.saldo * 0.05) / 10  # 5% dividido
+            valor_por_trade = (self.saldo * 0.05) / 10
         else:
             trades_disponiveis = max(1, self.max_trades_simultaneos - num_trades_ativos)
             valor_por_trade = (self.saldo * (self.posicao_por_trade_percent / 100)) / trades_disponiveis
         
-        # Aplica multiplicador de risco
         valor_por_trade *= self.risk_multiplier
         
-        # Mínimo $5, máximo 30% do saldo
         return max(5.0, min(valor_por_trade, self.saldo * 0.3))
     
-    def ajustar_agressividade(self, ultimo_resultado: str):
+    def ajustar_agressividade(self, resultado: str):
         """Ajusta agressividade baseado nos resultados"""
-        if ultimo_resultado == 'WIN':
-            self.consecutive_losses = 0
-            self.risk_multiplier = min(2.0, self.risk_multiplier * 1.1)  # Aumenta risco após ganho
-        elif ultimo_resultado == 'LOSS':
-            self.consecutive_losses += 1
-            if self.consecutive_losses >= 3:
-                self.risk_multiplier = max(0.5, self.risk_multiplier * 0.8)  # Reduz risco após 3 perdas
+        if resultado == 'GANHO':
+            self.perdas_consecutivas = 0
+            self.risk_multiplier = min(2.0, self.risk_multiplier * 1.1)
+        elif resultado == 'PERDA':
+            self.perdas_consecutivas += 1
+            if self.perdas_consecutivas >= 3:
+                self.risk_multiplier = max(0.5, self.risk_multiplier * 0.8)
             else:
-                self.risk_multiplier = max(0.7, self.risk_multiplier * 0.9)  # Reduz levemente
+                self.risk_multiplier = max(0.7, self.risk_multiplier * 0.9)
     
     def criar_trade_agressivo(self, token_data: Dict, analise: Dict) -> Optional[Dict]:
-        """Cria trade AGGRESSIVO - entra em quase tudo"""
+        """Cria trade AGGRESSIVO"""
         
-        # NÃO FILTRA POR DECISÃO - Entra em qualquer coisa com confiança > 40%
         if analise['confianca'] < 40:
             return None
         
-        # Verificar se já existe trade ativo para este token (evita duplicar)
         for trade in self.trades_ativos:
             if trade['ca'] == token_data.get('ca'):
-                # Se o trade atual está perdendo muito, pode reentrar
                 if trade['profit_percent'] < -15 and self.reentrar_perdas:
-                    continue  # Permite reentrada
+                    continue
                 return None
         
-        # Calcular valor do trade
         valor_trade = self.calcular_posicao_trade()
         
         if valor_trade <= 0 or valor_trade > self.saldo * 0.9:
             return None
         
-        # Dados do token
         price = analise['dados']['price']
         
-        # STOP LOSS MUITO APERTADO para day trade
         if self.stop_loss_tight:
             stop_loss = price * (1 - abs(analise['stop_loss_percent']) / 100)
         else:
-            stop_loss = price * (1 - 10 / 100)  # Fallback
+            stop_loss = price * 0.9
         
-        # TAKE PROFIT CURTO
         if self.take_profit_agressivo:
             take_profit = price * (1 + analise['take_profit_percent'] / 100)
         else:
-            take_profit = price * (1 + 15 / 100)  # Fallback
+            take_profit = price * 1.15
         
-        # Criar trade
         trade = {
             'id': len(self.historico_trades) + 1,
             'symbol': analise['dados']['symbol'],
@@ -337,7 +271,6 @@ class BotAgressivo:
             'agressividade': analise['agressividade']
         }
         
-        # Deduzir do saldo
         self.saldo -= valor_trade
         self.trades_ativos.append(trade)
         self.last_trade_time = datetime.now()
@@ -345,31 +278,26 @@ class BotAgressivo:
         return trade
     
     def atualizar_trades(self):
-        """Atualiza preços e executa saídas AGRESSIVAS"""
+        """Atualiza preços e executa saídas"""
         trades_fechados = []
         
         for trade in self.trades_ativos[:]:
             try:
-                # Buscar preço atual
                 url = f"https://api.dexscreener.com/latest/dex/tokens/{trade['ca']}"
-                response = requests.get(url, timeout=3)  # Timeout curto
+                response = requests.get(url, timeout=3)
                 if response.status_code == 200:
                     data = response.json()
                     if data.get('pairs'):
                         current_price = float(data['pairs'][0].get('priceUsd', 0))
                         trade['current_price'] = current_price
                         
-                        # Calcular PnL
                         profit_percent = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
                         profit_value = trade['position_size'] * (profit_percent / 100)
                         
                         trade['profit_percent'] = profit_percent
                         trade['profit_value'] = profit_value
-                        
-                        # Atualizar máximo profit
                         trade['max_profit'] = max(trade['max_profit'], profit_percent)
                         
-                        # Verificar condições de saída AGRESSIVAS
                         if self.verificar_saida_agressiva(trade):
                             self.fechar_trade(trade, trades_fechados)
             except:
@@ -378,87 +306,77 @@ class BotAgressivo:
         return trades_fechados
     
     def verificar_saida_agressiva(self, trade: Dict) -> bool:
-        """Condições de saída ULTRA AGRESSIVAS"""
+        """Condições de saída"""
         current_price = trade['current_price']
         
-        # 1. TAKE PROFIT RÁPIDO (2-8%)
         if current_price >= trade['take_profit']:
             trade['exit_reason'] = 'TAKE_PROFIT_RÁPIDO'
             return True
         
-        # 2. STOP LOSS APERTADO (3-5%)
         if current_price <= trade['stop_loss']:
             trade['exit_reason'] = 'STOP_LOSS_TIGHT'
             return True
         
-        # 3. TRAILING STOP AGRESSIVO (ativa com 2% de gain)
         if self.trailing_stop_agressivo and trade['profit_percent'] >= 2:
-            # Trailing dinâmico: mantém 50% do lucro máximo
             trail_level = trade['entry_price'] * (1 + (trade['max_profit'] * 0.5) / 100)
             if trail_level > trade['trailing_stop']:
                 trade['trailing_stop'] = trail_level
             
             if current_price <= trade['trailing_stop']:
-                trade['exit_reason'] = 'TRAILING_STOP_AGGR'
+                trade['exit_reason'] = 'TRAILING_STOP'
                 return True
         
-        # 4. SAÍDA POR TEMPO (máximo 30 minutos por trade)
         tempo_trade = (datetime.now() - trade['entry_time']).seconds / 60
         if tempo_trade > 30 and trade['profit_percent'] > 0:
             trade['exit_reason'] = 'SAÍDA_TEMPORIZADA'
             return True
         
-        # 5. CORTE RÁPIDO se cair muito rápido (mais que 8% do topo)
-        if trade['max_profit'] >= 5 and profit_percent <= trade['max_profit'] - 8:
+        if trade['max_profit'] >= 5 and trade['profit_percent'] <= trade['max_profit'] - 8:
             trade['exit_reason'] = 'CORTE_RÁPIDO'
             return True
         
         return False
     
     def fechar_trade(self, trade: Dict, trades_fechados: List):
-        """Fecha trade e atualiza estatísticas"""
+        """Fecha trade"""
         trade['status'] = 'CLOSED'
         trade['exit_price'] = trade['current_price']
         trade['exit_time'] = datetime.now()
-        
-        # Duração do trade
         trade['duracao_min'] = (trade['exit_time'] - trade['entry_time']).seconds / 60
         
-        # Adicionar lucro/perda ao saldo
         self.saldo += trade['position_size'] + trade['profit_value']
         
-        # Atualizar estatísticas
         self.estatisticas['total_trades'] += 1
         self.estatisticas['trades_dia'] += 1
         self.estatisticas['lucro_dia'] += trade['profit_value']
         
         if trade['profit_value'] > 0:
-            self.estatisticas['trades_vencedores'] += 1
+            self.estatisticas['trades_ganhos'] += 1
             self.estatisticas['lucro_total'] += trade['profit_value']
             self.estatisticas['maior_lucro'] = max(self.estatisticas['maior_lucro'], trade['profit_value'])
-            self.ajustar_agressividade('WIN')
+            self.ajustar_agressividade('GANHO')
         else:
-            self.estatisticas['trades_perdedores'] += 1
+            self.estatisticas['trades_perdidos'] += 1
             self.estatisticas['lucro_total'] += trade['profit_value']
             self.estatisticas['maior_perda'] = min(self.estatisticas['maior_perda'], trade['profit_value'])
-            self.ajustar_agressividade('LOSS')
+            self.ajustar_agressividade('PERDA')
         
-        # Calcular win rate
-        total = self.estatisticas['trades_vencedores'] + self.estatisticas['trades_perdedores']
+        total = self.estatisticas['trades_ganhos'] + self.estatisticas['trades_perdidos']
         if total > 0:
-            self.estatisticas['win_rate'] = (self.estatisticas['trades_vencedores'] / total) * 100
+            self.estatisticas['win_rate'] = (self.estatisticas['trades_ganhos'] / total) * 100
         
-        # Mover para histórico
         self.historico_trades.append(trade.copy())
         self.trades_ativos.remove(trade)
         trades_fechados.append(trade)
     
     def get_estatisticas(self) -> Dict:
-        """Retorna estatísticas atualizadas"""
+        """Retorna estatísticas atualizadas - VERSÃO CORRIGIDA"""
         return {
             'saldo': self.saldo,
             'trades_ativos': len(self.trades_ativos),
             'trades_total': self.estatisticas['total_trades'],
+            'trades_ganhos': self.estatisticas['trades_ganhos'],
+            'trades_perdidos': self.estatisticas['trades_perdidos'],
             'trades_dia': self.estatisticas['trades_dia'],
             'win_rate': round(self.estatisticas['win_rate'], 2),
             'lucro_total': round(self.estatisticas['lucro_total'], 2),
@@ -466,7 +384,7 @@ class BotAgressivo:
             'maior_lucro': round(self.estatisticas['maior_lucro'], 2),
             'maior_perda': round(self.estatisticas['maior_perda'], 2),
             'risk_multiplier': round(self.risk_multiplier, 2),
-            'consecutive_losses': self.consecutive_losses
+            'perdas_consecutivas': self.perdas_consecutivas
         }
 
 # ==========================================================
@@ -479,7 +397,7 @@ if 'analisador' not in st.session_state:
     st.session_state.analisador = AnalisadorAgressivo()
 
 if 'auto_mode' not in st.session_state:
-    st.session_state.auto_mode = True  # SEMPRE ATIVO
+    st.session_state.auto_mode = True
 
 if 'tokens_monitorados' not in st.session_state:
     st.session_state.tokens_monitorados = []
@@ -504,37 +422,11 @@ def buscar_token(ca: str) -> Optional[Dict]:
         pass
     return None
 
-def entrada_agressiva_automatica():
-    """Entra automaticamente em tokens promissores"""
-    if not st.session_state.auto_mode:
-        return
-    
-    # Buscar tokens "em alta" automaticamente (simulado)
-    tokens_populares = [
-        "0x2170Ed0880ac9A755fd29B2688956BD959F933F8",  # ETH
-        "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",  # BNB
-        "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",  # USDC
-    ]
-    
-    for ca in tokens_populares:
-        if ca not in [t['ca'] for t in st.session_state.tokens_monitorados]:
-            token_data = buscar_token(ca)
-            if token_data:
-                analise = st.session_state.analisador.analisar_token(token_data)
-                if analise['confianca'] > 40:  # Baixo threshold
-                    st.session_state.tokens_monitorados.append({
-                        'ca': ca,
-                        'symbol': analise['dados'].get('symbol', 'TOKEN'),
-                        'analise': analise,
-                        'adicionado_em': datetime.now(),
-                        'entradas_tentadas': 0
-                    })
-
 # ==========================================================
 # INTERFACE PRINCIPAL - TEMA ESCURO
 # ==========================================================
 st.title("🔥 SNIPER AI - BOT ULTRA AGRESSIVO")
-st.markdown("### ⚡ DAY TRADING AUTOMÁTICO | STOP TIGHT | TP CURTO | HIGH FREQUENCY")
+st.markdown("### ⚡ DAY TRADING AUTOMÁTICO | HIGH FREQUENCY")
 
 # ==========================================================
 # SIDEBAR - TEMA ESCURO
@@ -544,13 +436,13 @@ with st.sidebar:
     st.markdown("""
     <style>
     .sidebar .sidebar-content {
-        background-color: #0E1117;
-        color: white;
+        background-color: #0E1117 !important;
+        color: white !important;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    st.header("💰 CONTROLE DO BOT", anchor=False)
+    st.header("💰 CONTROLE DO BOT")
     
     # Editor de saldo
     col_s1, col_s2 = st.columns(2)
@@ -575,17 +467,19 @@ with st.sidebar:
     # ESTATÍSTICAS EM TEMPO REAL
     stats = st.session_state.bot.get_estatisticas()
     
+    # CORREÇÃO AQUI: Usando trades_ganhos em vez de trades_vencedores
     st.metric("💵 SALDO ATUAL", f"${stats['saldo']:,.2f}",
               delta=f"{stats['lucro_dia']:+.2f} hoje")
     
+    # CORREÇÃO AQUI: Usando trades_ganhos
     st.metric("📊 WIN RATE", f"{stats['win_rate']:.1f}%",
-              delta=f"{stats['trades_vencedores']}/{stats['trades_total']}")
+              delta=f"{stats['trades_ganhos']}/{stats['trades_total']}")
     
     st.metric("⚡ TRADES/HOJE", f"{stats['trades_dia']}",
               delta=f"${stats['lucro_dia']:+.2f}")
     
     st.metric("🔥 RISCO MULT.", f"{stats['risk_multiplier']}x",
-              delta=f"Loss streak: {stats['consecutive_losses']}")
+              delta=f"Loss streak: {stats['perdas_consecutivas']}")
     
     st.divider()
     
@@ -595,11 +489,10 @@ with st.sidebar:
     st.session_state.auto_mode = st.toggle(
         "🤖 MODO AUTOMÁTICO",
         value=True,
-        disabled=True,  # Sempre ativo
-        help="Bot sempre ativo e caçando oportunidades"
+        disabled=True,
+        help="Bot sempre ativo"
     )
     
-    # Sliders para controle agressivo
     agressividade = st.slider(
         "NÍVEL DE AGRESSIVIDADE",
         min_value=1,
@@ -622,7 +515,6 @@ with st.sidebar:
         st.session_state.bot.max_trades_simultaneos = 15
         st.session_state.bot.posicao_por_trade_percent = 10
     
-    # Parâmetros de trade
     col_p1, col_p2 = st.columns(2)
     with col_p1:
         st.metric("MAX TRADES", st.session_state.bot.max_trades_simultaneos)
@@ -633,7 +525,6 @@ with st.sidebar:
     
     # AÇÕES RÁPIDAS
     if st.button("🎯 FORÇAR ENTRADA", use_container_width=True, type="primary"):
-        entrada_agressiva_automatica()
         st.success("Caçando oportunidades!")
         st.rerun()
     
@@ -675,7 +566,7 @@ with col_input1:
         "COLE O CA DO TOKEN:",
         placeholder="0x...",
         key="input_token",
-        help="Cole qualquer token - bot analisa e entra AGGRESSIVAMENTE"
+        help="Cole qualquer token"
     )
 
 with col_input2:
@@ -692,17 +583,16 @@ with col_input3:
         type="secondary",
         use_container_width=True,
         disabled=not token_ca,
-        help="Entra sem análise detalhada - MÁXIMA AGRESSIVIDADE"
+        help="Entra sem análise detalhada"
     )
 
-if token_ca:
+if token_ca and (btn_analisar or btn_entrar_agressivo):
     token_data = buscar_token(token_ca.strip())
     
     if token_data:
-        # Análise AGGRESSIVA
         analise = st.session_state.analisador.analisar_token(token_data)
         
-        # Mostrar resultado IMEDIATO
+        # Mostrar resultado
         col_status1, col_status2, col_status3, col_status4 = st.columns(4)
         
         with col_status1:
@@ -756,11 +646,10 @@ if token_ca:
             st.metric("📈 R:R", f"1:{rr:.1f}",
                      f"Time: {analise['timeframe']}")
         
-        # BOTÃO DE ENTRADA AGRESSIVA
-        if analise['confianca'] > 40 or btn_entrar_agressivo:  # THRESHOLD BAIXO
+        # BOTÃO DE ENTRADA
+        if analise['confianca'] > 40 or btn_entrar_agressivo:
             st.success(f"✅ PRONTO PARA ENTRADA AGRESSIVA!")
             
-            # Calcular posição
             valor_trade = st.session_state.bot.calcular_posicao_trade()
             
             col_e1, col_e2 = st.columns([2, 1])
@@ -779,8 +668,8 @@ if token_ca:
                     else:
                         st.error("❌ Erro na entrada")
         
-        # Adicionar à lista de monitoramento automático
-        if analise['confianca'] > 30:  # THRESHOLD MUITO BAIXO
+        # Adicionar à lista de monitoramento
+        if analise['confianca'] > 30:
             if st.button("➕ MONITORAR AUTOMATICAMENTE", use_container_width=True):
                 st.session_state.tokens_monitorados.append({
                     'ca': token_data['ca'],
@@ -793,14 +682,14 @@ if token_ca:
                 st.rerun()
 
 # ==========================================================
-# SEÇÃO 2: TRADES ATIVOS - VISUALIZAÇÃO AGRESSIVA
+# SEÇÃO 2: TRADES ATIVOS
 # ==========================================================
 st.header("📈 TRADES ATIVOS - MONITORAMENTO EM TEMPO REAL")
 
 # Atualizar trades
 trades_fechados = st.session_state.bot.atualizar_trades()
 
-# Mostrar trades fechados recentemente (rápido)
+# Mostrar trades fechados recentemente
 if trades_fechados:
     st.subheader("🔒 ÚLTIMOS FECHAMENTOS")
     for trade in trades_fechados[-5:]:
@@ -809,9 +698,9 @@ if trades_fechados:
         
         col_f1, col_f2, col_f3 = st.columns([3, 2, 1])
         with col_f1:
-            st.write(f"{emoji} **{trade['symbol']}** - {trade['exit_reason']}")
+            st.write(f"{emoji} **{trade['symbol']}** - {trade.get('exit_reason', 'N/A')}")
         with col_f2:
-            st.write(f"⏱️ {trade['duracao_min']:.1f}min")
+            st.write(f"⏱️ {trade.get('duracao_min', 0):.1f}min")
         with col_f3:
             st.write(f"**${profit:+.2f}** ({trade['profit_percent']:+.1f}%)")
 
@@ -819,7 +708,6 @@ if trades_fechados:
 if st.session_state.bot.trades_ativos:
     st.subheader(f"🟢 {len(st.session_state.bot.trades_ativos)} TRADES EM ABERTO")
     
-    # Grid de trades
     cols = st.columns(4)
     
     for idx, trade in enumerate(st.session_state.bot.trades_ativos):
@@ -829,22 +717,15 @@ if st.session_state.bot.trades_ativos:
                 color = "🟢" if profit >= 0 else "🔴"
                 
                 # Cabeçalho colorido
-                if profit >= 5:
-                    st.markdown(f"<div style='background-color:#00FF00; padding:5px; border-radius:5px;'>", unsafe_allow_html=True)
-                elif profit <= -3:
-                    st.markdown(f"<div style='background-color:#FF0000; padding:5px; border-radius:5px;'>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<div style='background-color:#FFA500; padding:5px; border-radius:5px;'>", unsafe_allow_html=True)
+                profit_color = "#00FF00" if profit >= 5 else "#FF0000" if profit <= -3 else "#FFA500"
+                st.markdown(f"<div style='background-color:{profit_color}; padding:5px; border-radius:5px;'>", unsafe_allow_html=True)
+                st.markdown(f"**{trade['symbol']}** ({trade.get('agressividade', 'N/A')})</div>", unsafe_allow_html=True)
                 
-                st.markdown(f"**{trade['symbol']}** ({trade['agressividade']})</div>", unsafe_allow_html=True)
-                
-                # Dados principais
                 st.markdown(f"### {color} {profit:+.2f}%")
                 st.caption(f"💰 ${trade['position_size']:.2f}")
                 st.caption(f"🎯 TP: +{trade['analise']['take_profit_percent']}%")
                 st.caption(f"⛔ SL: {trade['analise']['stop_loss_percent']}%")
                 
-                # Botão de saída manual
                 if st.button(f"⏹️ SAIR", key=f"exit_{trade['id']}", use_container_width=True):
                     trade['exit_reason'] = 'SAÍDA_MANUAL'
                     st.session_state.bot.fechar_trade(trade, [])
@@ -853,13 +734,11 @@ else:
     st.info("📭 Nenhum trade ativo - Bot aguardando oportunidades")
 
 # ==========================================================
-# SEÇÃO 3: SISTEMA AUTOMÁTICO AGRESSIVO
+# SEÇÃO 3: SISTEMA AUTOMÁTICO
 # ==========================================================
 st.header("🤖 SISTEMA AUTOMÁTICO - CAÇANDO OPORTUNIDADES")
 
-# Entrada automática agressiva
-if st.session_state.auto_mode:
-    # Atualizar tokens monitorados
+if st.session_state.auto_mode and st.session_state.tokens_monitorados:
     for token in st.session_state.tokens_monitorados[:]:
         try:
             token_data = buscar_token(token['ca'])
@@ -867,7 +746,6 @@ if st.session_state.auto_mode:
                 analise = st.session_state.analisador.analisar_token(token_data)
                 token['analise'] = analise
                 
-                # Tentar entrada AGGRESSIVA
                 if analise['confianca'] > 40:
                     trade = st.session_state.bot.criar_trade_agressivo(token_data, analise)
                     if trade:
@@ -876,31 +754,26 @@ if st.session_state.auto_mode:
         except:
             continue
     
-    # Mostrar tokens sendo monitorados
+    # Mostrar tokens monitorados
     if st.session_state.tokens_monitorados:
         st.subheader(f"🎯 {len(st.session_state.tokens_monitorados)} TOKENS EM MONITORAMENTO")
         
         for token in st.session_state.tokens_monitorados[-10:]:
-            analise = token['analise']
+            analise = token.get('analise', {})
             col_m1, col_m2, col_m3 = st.columns([2, 2, 1])
             
             with col_m1:
-                st.write(f"**{token['symbol']}**")
-                st.caption(f"Conf: {analise['confianca']:.0f}%")
+                st.write(f"**{token.get('symbol', 'N/A')}**")
+                st.caption(f"Conf: {analise.get('confianca', 0):.0f}%")
             
             with col_m2:
-                st.write(f"{analise['cor']} {analise['decisao']}")
-                st.caption(f"Vol: {analise['dados'].get('volatilidade', 0):.1f}")
+                st.write(f"{analise.get('cor', '⚫')} {analise.get('decisao', 'N/A')}")
+                st.caption(f"Vol: {analise.get('dados', {}).get('volatilidade', 0):.1f}")
             
             with col_m3:
                 if st.button("🗑️", key=f"remove_{token['ca']}"):
                     st.session_state.tokens_monitorados.remove(token)
                     st.rerun()
-    
-    # Auto-refresh agressivo
-    if (datetime.now() - st.session_state.ultima_atualizacao).seconds > 10:
-        st.session_state.ultima_atualizacao = datetime.now()
-        st.rerun()
 
 # ==========================================================
 # SEÇÃO 4: DASHBOARD DE PERFORMANCE
@@ -918,7 +791,7 @@ with col_s1:
 
 with col_s2:
     st.metric("📊 WIN RATE", f"{stats['win_rate']:.1f}%",
-             delta=f"{stats['trades_vencedores']}/{stats['trades_total']}")
+             delta=f"{stats['trades_ganhos']}/{stats['trades_total']}")
 
 with col_s3:
     st.metric("⚡ TRADES/DIA", f"{stats['trades_dia']}",
@@ -926,7 +799,7 @@ with col_s3:
 
 with col_s4:
     st.metric("🔥 MULT. RISCO", f"{stats['risk_multiplier']}x",
-             delta=f"Streak: {stats['consecutive_losses']}")
+             delta=f"Streak: {stats['perdas_consecutivas']}")
 
 with col_s5:
     st.metric("📈 TRADES ATIVOS", f"{stats['trades_ativos']}",
@@ -942,7 +815,6 @@ if st.session_state.bot.historico_trades:
         
         fig = go.Figure()
         
-        # Lucro acumulado
         fig.add_trace(go.Scatter(
             x=df.index,
             y=df['lucro_acumulado'],
@@ -951,7 +823,6 @@ if st.session_state.bot.historico_trades:
             line=dict(color='#00FF00', width=4)
         ))
         
-        # Média móvel
         fig.add_trace(go.Scatter(
             x=df.index,
             y=df['media_movel'],
@@ -961,14 +832,13 @@ if st.session_state.bot.historico_trades:
         ))
         
         fig.update_layout(
-            title='PERFORMANCE AGRESSIVA DO BOT',
+            title='PERFORMANCE DO BOT',
             xaxis_title='Número do Trade',
             yaxis_title='Lucro Acumulado ($)',
             height=400,
             plot_bgcolor='#1E1E1E',
             paper_bgcolor='#1E1E1E',
-            font=dict(color='white'),
-            showlegend=True
+            font=dict(color='white')
         )
         
         st.plotly_chart(fig, use_container_width=True)
@@ -985,12 +855,12 @@ st.markdown("""
     }
     
     /* Sidebar escura */
-    section[data-testid="stSidebar"] {
+    section[data-testid="stSidebar"] > div {
         background-color: #0E1117;
         border-right: 1px solid #2D3746;
     }
     
-    .css-1d391kg, .css-12oz5g7, .css-1y4p8pa {
+    .st-emotion-cache-1cypcdb {
         background-color: #0E1117;
     }
     
@@ -1000,7 +870,7 @@ st.markdown("""
     }
     
     /* Inputs com tema escuro */
-    .stTextInput input, .stNumberInput input, .stSelectbox select {
+    .stTextInput input, .stNumberInput input {
         background-color: #1E1E1E !important;
         color: white !important;
         border: 1px solid #2D3746 !important;
@@ -1013,7 +883,6 @@ st.markdown("""
         border: none;
         font-weight: bold;
         border-radius: 8px;
-        transition: all 0.3s;
     }
     
     .stButton > button:hover {
@@ -1081,15 +950,9 @@ st.markdown("""
         background: rgba(255, 0, 0, 0.1);
     }
     
-    .trade-card-neutral {
-        border-left: 5px solid #FFA500;
-        background: rgba(255, 165, 0, 0.1);
-    }
-    
     /* Scrollbar personalizada */
     ::-webkit-scrollbar {
         width: 8px;
-        height: 8px;
     }
     
     ::-webkit-scrollbar-track {
@@ -1101,34 +964,11 @@ st.markdown("""
         border-radius: 4px;
     }
     
-    ::-webkit-scrollbar-thumb:hover {
-        background: #DC143C;
-    }
-    
-    /* Tooltips */
-    .stTooltip {
-        background-color: #1E1E1E !important;
-        color: white !important;
-        border: 1px solid #FF0000 !important;
-    }
-    
     /* Expanders */
     .streamlit-expanderHeader {
         background-color: #1E1E1E !important;
         color: white !important;
         border: 1px solid #2D3746 !important;
-    }
-    
-    /* Selectboxes e dropdowns */
-    .st-ae, .st-ag, .st-af {
-        background-color: #1E1E1E !important;
-        color: white !important;
-    }
-    
-    /* Tabelas */
-    .stDataFrame {
-        background-color: #1E1E1E !important;
-        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1154,9 +994,8 @@ with footer_col3:
         st.caption("🤖 MODO: 🔴 INATIVO")
 
 # ==========================================================
-# AUTO-REFRESH PARA DAY TRADING
+# AUTO-REFRESH
 # ==========================================================
 if st.session_state.auto_mode:
-    # Refresh a cada 15 segundos para day trading
     time.sleep(15)
     st.rerun()
