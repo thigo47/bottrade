@@ -448,111 +448,8 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ===========================================
-        # GESTÃO DE SALDO
-        st.markdown("#### 💰 Gerenciar Saldo")
-        
-        st.metric("Saldo Atual", f"${st.session_state.saldo:.2f}")
-        
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            novo_saldo = st.number_input(
-                "Novo saldo:",
-                min_value=10.0,
-                max_value=100000.0,
-                value=float(st.session_state.saldo),
-                step=100.0,
-                key="input_novo_saldo"
-            )
-        
-        with col_s2:
-            if st.button("💾 Atualizar", use_container_width=True):
-                st.session_state.saldo = novo_saldo
-                st.success(f"Saldo: ${novo_saldo:.2f}")
-                st.rerun()
-        
-        st.divider()
-        
-        # CONTROLES RÁPIDOS
-        if st.button("🎯 Forçar Entrada de Teste", use_container_width=True):
-            sinal_teste = {
-                'symbol': f'TEST{random.randint(100, 999)}',
-                'price': random.uniform(0.00001, 0.001),
-                'score': random.randint(60, 90),
-                'stop_loss': 0.000008,
-                'take_profit': 0.000012,
-                'confidence': random.choice(['LOW', 'MEDIUM', 'HIGH']),
-                'token_type': 'TEST'
-            }
-            
-            trade = executar_trade(sinal_teste)
-            if trade:
-                st.success(f"✅ {trade['symbol']} executado")
-            st.rerun()
-        
-        if st.button("🔄 Atualizar Tudo", use_container_width=True):
-            st.rerun()
-
 # ==========================================================
-# ÁREA PRINCIPAL
-# ==========================================================
-
-# Atualizar trades
-trades_fechados = atualizar_trades()
-
-# Processar sinais do motor
-engine = st.session_state.trading_engine
-if st.session_state.config['auto_trading'] and len(engine.token_pool) > 0:
-    try:
-        while not engine.trade_queue.empty():
-            item = engine.trade_queue.get_nowait()
-            
-            if item['type'] == 'TRADE_SIGNAL':
-                if len(st.session_state.trades_ativos) < st.session_state.config['max_trades_ativos']:
-                    trade = executar_trade(item['data'])
-                    if trade:
-                        st.toast(f"🤖 AUTO: {trade['symbol']} | Score: {item['data']['score']}")
-    except:
-        pass
-
-# ==========================================================
-# DASHBOARD PRINCIPAL
-# ==========================================================
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric(
-        "Tokens Monitorados",
-        len(engine.token_pool),
-        f"Scans: {engine.stats['total_scans']}"
-    )
-
-with col2:
-    win_rate = st.session_state.estatisticas['win_rate']
-    delta = f"{st.session_state.estatisticas['trades_ganhos']}/{st.session_state.estatisticas['total_trades']}"
-    st.metric("Win Rate", f"{win_rate:.1f}%", delta)
-
-with col3:
-    st.metric(
-        "Trades Ativos",
-        len(st.session_state.trades_ativos),
-        f"Max: {st.session_state.config['max_trades_ativos']}"
-    )
-
-with col4:
-    lucro_color = "normal" if st.session_state.estatisticas['lucro_dia'] >= 0 else "inverse"
-    st.metric(
-        "Lucro Hoje",
-        f"${st.session_state.estatisticas['lucro_dia']:+.2f}",
-        f"Total: ${st.session_state.estatisticas['lucro_total']:+.2f}",
-        delta_color=lucro_color
-    )
-
-#
-
-# ==========================================================
-# BARRA LATERAL - GESTÃO DE TOKENS
+# BARRA LATERAL - GESTÃO DE TOKENS (VERSÃO PARA CELULAR)
 # ==========================================================
 with st.sidebar:
     st.markdown("### 🎯 GESTÃO DE TOKENS")
@@ -727,244 +624,149 @@ with st.sidebar:
                 'max_trades_ativos': st.session_state.max_trades_ativos,
                 'tamanho_trade_percent': st.session_state.tamanho_trade_percent
             })
-            st.success("Configurações salvas!") ==========================================================
-# SEÇÃO DE TRADES ATIVOS
-# ==========================================================
-st.markdown("### 📊 TRADES EM ANDAMENTO")
+            st.success("Configurações salvas!")
 
+# ==========================================================
+# PRINCIPAL - DASHBOARD
+# ==========================================================
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("💰 Saldo", f"${st.session_state.saldo:.2f}")
+with col2:
+    st.metric("📊 Win Rate", f"{st.session_state.estatisticas['win_rate']:.1f}%")
+with col3:
+    st.metric("🎯 Trades Ativos", len(st.session_state.trades_ativos))
+
+# Estatísticas do motor
+engine = st.session_state.trading_engine
+stats = engine.get_stats()
+
+col4, col5, col6 = st.columns(3)
+with col4:
+    st.metric("🔍 Total Scans", stats['total_scans'])
+with col5:
+    st.metric("🚨 Sinais Encontrados", stats['signals_found'])
+with col6:
+    st.metric("📈 Tokens Monitorados", stats['tokens_monitorados'])
+
+# Processar sinais da fila
+if st.session_state.config['auto_trading'] and stats['signals_found'] > 0:
+    try:
+        while not engine.trade_queue.empty():
+            signal = engine.trade_queue.get_nowait()
+            if signal['type'] == 'TRADE_SIGNAL':
+                # Verificar se já não temos muitos trades
+                if len(st.session_state.trades_ativos) < st.session_state.config['max_trades_ativos']:
+                    trade = executar_trade(signal['data'])
+                    if trade:
+                        st.success(f"🚀 Trade executado: {trade['symbol']} | Score: {trade['score']}")
+    except queue.Empty:
+        pass
+
+# Atualizar trades ativos
 if st.session_state.trades_ativos:
-    # Criar DataFrame para display
-    trades_data = []
-    for trade in st.session_state.trades_ativos:
-        trades_data.append({
-            'ID': trade['id'],
-            'Símbolo': trade['symbol'],
-            'Tipo': trade.get('token_type', 'CUSTOM'),
-            'Entrada': f"${trade['entry_price']:.8f}",
-            'Atual': f"${trade['current_price']:.8f}",
-            'P/L %': f"{trade['profit_loss_percent']:+.2f}%",
-            'P/L $': f"${trade['profit_loss']:+.2f}",
-            'Score': trade['score']
-        })
-    
-    df = pd.DataFrame(trades_data)
-    
-    # Função para colorir P/L
-    def color_pl(val):
-        try:
-            if '%' in val:
-                num = float(val.replace('%', '').replace('+', ''))
-            else:
-                num = float(val.replace('$', '').replace('+', ''))
-            
-            if num > 0:
-                return 'background-color: #003300; color: #00FF00; font-weight: bold;'
-            elif num < 0:
-                return 'background-color: #330000; color: #FF0000; font-weight: bold;'
-            else:
-                return ''
-        except:
-            return ''
-    
-    # Aplicar estilo
-    styled_df = df.style.applymap(color_pl, subset=['P/L %', 'P/L $'])
-    
-    # Mostrar tabela
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
-    
-    # Botões de ação
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
-    
-    with col_btn1:
-        if st.button("⏹️ Fechar Todos", use_container_width=True):
-            for trade in st.session_state.trades_ativos[:]:
-                fechar_trade(trade, 'MANUAL', [])
-            st.rerun()
-    
-    with col_btn2:
-        if st.button("📈 Atualizar Preços", use_container_width=True):
-            st.rerun()
-    
-    with col_btn3:
-        if st.button("📊 Ver Estatísticas", use_container_width=True):
-            st.session_state.token_manager_tab = "estatisticas"
-            st.rerun()
+    trades_fechados = atualizar_trades()
+    if trades_fechados:
+        for trade in trades_fechados:
+            emoji = "✅" if trade['profit_loss'] > 0 else "❌"
+            st.info(f"{emoji} Trade fechado: {trade['symbol']} | P&L: ${trade['profit_loss']:.2f}")
 
+# Seção de trades ativos
+st.markdown("### 📈 Trades Ativos")
+if st.session_state.trades_ativos:
+    trades_df = pd.DataFrame(st.session_state.trades_ativos)
+    
+    # Formatar colunas
+    trades_display = trades_df.copy()
+    trades_display['entry_price'] = trades_display['entry_price'].apply(lambda x: f"${x:.6f}")
+    trades_display['current_price'] = trades_display['current_price'].apply(lambda x: f"${x:.6f}")
+    trades_display['stop_loss'] = trades_display['stop_loss'].apply(lambda x: f"${x:.6f}")
+    trades_display['take_profit'] = trades_display['take_profit'].apply(lambda x: f"${x:.6f}")
+    trades_display['profit_loss'] = trades_display['profit_loss'].apply(lambda x: f"${x:.2f}")
+    trades_display['profit_loss_percent'] = trades_display['profit_loss_percent'].apply(lambda x: f"{x:.2f}%")
+    
+    st.dataframe(
+        trades_display[['symbol', 'entry_price', 'current_price', 'profit_loss', 'profit_loss_percent', 'confidence']],
+        use_container_width=True,
+        hide_index=True
+    )
 else:
-    st.info("""
-    📭 **Nenhum trade ativo no momento**
-    
-    Para começar:
-    1. Vá para a sidebar e clique em **"➕ Adicionar"**
-    2. Cole o CA do token que quer monitorar
-    3. O sistema começará a escanear automaticamente
-    4. Quando encontrar oportunidades, executará trades
-    """)
-    
-    # Status do scanner
-    if len(engine.token_pool) == 0:
-        st.warning("⚠️ **Adicione pelo menos um token para começar o monitoramento**")
-    else:
-        stats = engine.get_stats()
-        st.success(f"🔍 **Scanner ativo** - Monitorando {len(engine.token_pool)} tokens")
+    st.info("📭 Nenhum trade ativo no momento")
 
-# ==========================================================
-# SEÇÃO DE HISTÓRICO
-# ==========================================================
+# Gráfico de performance
+st.markdown("### 📊 Performance")
 if st.session_state.historico_trades:
-    st.markdown("### 📋 HISTÓRICO RECENTE")
+    hist_df = pd.DataFrame(st.session_state.historico_trades)
     
-    # Últimos 5 trades
-    recent_trades = st.session_state.historico_trades[-5:]
-    
-    for trade in reversed(recent_trades):
-        profit = trade['profit_loss']
-        emoji = "🐕" if trade.get('token_type') == "MEME" else ("🟢" if profit > 0 else "🔴")
+    if not hist_df.empty:
+        hist_df['cumulative_pnl'] = hist_df['profit_loss'].cumsum() + 1000
         
-        col_h1, col_h2, col_h3 = st.columns([2, 2, 1])
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=hist_df['exit_time'],
+            y=hist_df['cumulative_pnl'],
+            mode='lines+markers',
+            name='Patrimônio',
+            line=dict(color='#00FFAA', width=3),
+            fill='tozeroy',
+            fillcolor='rgba(0, 255, 170, 0.1)'
+        ))
         
-        with col_h1:
-            type_badge = f"`{trade.get('token_type', 'CUSTOM')}`"
-            st.write(f"{emoji} **{trade['symbol']}** {type_badge}")
-            st.caption(f"{trade.get('exit_reason', '')}")
+        fig.update_layout(
+            title="Evolução do Patrimônio",
+            xaxis_title="Data",
+            yaxis_title="Patrimônio ($)",
+            template="plotly_dark",
+            height=400
+        )
         
-        with col_h2:
-            st.write(f"**Entrada:** ${trade['entry_price']:.8f}")
-            st.write(f"**Saída:** ${trade.get('exit_price', 0):.8f}")
-        
-        with col_h3:
-            st.metric("", f"{trade['profit_loss_percent']:+.2f}%", f"${profit:+.2f}")
-        
-        st.divider()
+        st.plotly_chart(fig, use_container_width=True)
 
-# ==========================================================
-# INFORMAÇÕES DO SISTEMA
-# ==========================================================
+# Seção de histórico de trades
+st.markdown("### 📋 Histórico de Trades")
+if st.session_state.historico_trades:
+    hist_display = pd.DataFrame(st.session_state.historico_trades[-10:])  # Últimos 10 trades
+    
+    if not hist_display.empty:
+        # Formatar colunas
+        hist_display['entry_price'] = hist_display['entry_price'].apply(lambda x: f"${x:.6f}")
+        hist_display['exit_price'] = hist_display['exit_price'].apply(lambda x: f"${x:.6f}")
+        hist_display['profit_loss'] = hist_display['profit_loss'].apply(lambda x: f"${x:.2f}")
+        hist_display['profit_loss_percent'] = hist_display['profit_loss_percent'].apply(lambda x: f"{x:.2f}%")
+        
+        # Adicionar emoji para resultado
+        def get_emoji(pl):
+            return "✅" if float(pl.replace('$', '')) > 0 else "❌"
+        
+        hist_display['result'] = hist_display['profit_loss'].apply(get_emoji)
+        
+        st.dataframe(
+            hist_display[['result', 'symbol', 'entry_price', 'exit_price', 'profit_loss', 'profit_loss_percent', 'exit_reason']],
+            use_container_width=True,
+            hide_index=True
+        )
+else:
+    st.info("📭 Nenhum trade no histórico")
+
+# Footer
 st.markdown("---")
-
-col_info1, col_info2 = st.columns(2)
-
-with col_info1:
-    st.markdown("#### ℹ️ Status do Sistema")
-    
-    stats = engine.get_stats()
-    
-    info_data = {
-        "Trading Automático": "✅ ATIVO" if st.session_state.config['auto_trading'] else "⏸️ PAUSADO",
-        "Tokens Monitorados": len(engine.token_pool),
-        "Total de Scans": stats['total_scans'],
-        "Sinais Encontrados": stats['signals_found'],
-        "Último Sinal": f"Há {(datetime.now() - (stats['last_signal_time'] or datetime.now())).seconds}s" if stats['last_signal_time'] else "Nunca"
-    }
-    
-    for key, value in info_data.items():
-        st.write(f"**{key}:** {value}")
-
-with col_info2:
-    st.markdown("#### 💡 Dicas Rápidas")
-    
-    tips = [
-        "✅ Adicione apenas tokens que você conhece",
-        "🔍 O sistema escaneia a cada 3 segundos",
-        "🎯 Score > 60 = oportunidade de compra",
-        "📊 Comece com trades pequenos (0.5-1%)",
-        "🗑️ Remova tokens que não performam bem"
-    ]
-    
-    for tip in tips:
-        st.write(f"• {tip}")
-
-# ==========================================================
-# RODAPÉ
-# ==========================================================
-st.markdown("---")
-
-footer_col1, footer_col2 = st.columns(2)
-
-with footer_col1:
-    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%H:%M:%S')}")
-
-with footer_col2:
-    if st.session_state.config['auto_trading']:
-        st.caption("🤖 **MODO AUTOMÁTICO ATIVO**")
-    else:
-        st.caption("⏸️ **MODO MANUAL**")
-
-# ==========================================================
-# CSS
-# ==========================================================
 st.markdown("""
-<style>
-    /* Estilos gerais */
-    .stMetric {
-        background: linear-gradient(45deg, #1a1a2e, #16213e);
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #00FFFF;
-        transition: transform 0.3s;
-    }
-    
-    .stMetric:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(0, 255, 255, 0.3);
-    }
-    
-    /* Tabs na sidebar */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        height: 40px;
-        font-size: 14px;
-        font-weight: bold;
-    }
-    
-    /* Botões */
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: bold;
-        transition: all 0.3s;
-        margin: 2px 0;
-    }
-    
-    .stButton > button[type="primary"] {
-        background: linear-gradient(45deg, #00FFFF, #0080FF);
-        color: white;
-        border: none;
-    }
-    
-    .stButton > button[type="secondary"] {
-        background: linear-gradient(45deg, #FF6B6B, #FF8E53);
-        color: white;
-        border: none;
-    }
-    
-    .stButton > button:hover {
-        transform: scale(1.02);
-    }
-    
-    /* Text areas */
-    .stTextArea textarea {
-        font-family: monospace;
-        font-size: 14px;
-    }
-    
-    /* Badges */
-    code {
-        background: linear-gradient(45deg, #FF6B6B, #FF8E53) !important;
-        color: white !important;
-        padding: 2px 8px !important;
-        border-radius: 12px !important;
-        font-size: 12px !important;
-        font-weight: bold !important;
-    }
-</style>
+<div style="text-align: center; color: #666; font-size: 12px;">
+    <p>🚀 SNIPER AI PRO - Sistema de trading automatizado | Use por sua conta e risco</p>
+    <p>⚠️ Este é um simulador educacional. Não use com dinheiro real.</p>
+</div>
 """, unsafe_allow_html=True)
 
-# ==========================================================
-# AUTO-REFRESH
-# ==========================================================
+# Atualizar a página automaticamente
+if st.button("🔄 Atualizar Dados", use_container_width=True):
+    st.rerun()
 
-time.sleep(3)
-st.rerun()
+# Auto-refresh a cada 30 segundos
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+
+if (datetime.now() - st.session_state.last_refresh).seconds > 30:
+    st.session_state.last_refresh = datetime.now()
+    st.rerun()
