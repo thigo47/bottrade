@@ -519,9 +519,10 @@ def criar_grafico_performance():
     negative_trades = df[df['profit_loss'] <= 0]
     
     if len(positive_trades) > 0:
-        fig.add_trace(go.Scatter(
-            x=positive_trades.index,
-            y=positive_trades['cumulative_profit'],
-            mode='markers',
-            name='Trades Positivos',
-            marker=dict(color='#00FF00', si)
+    fig.add_trace(go.Scatter(
+        x=positive_trades.index,
+        y=positive_trades['cumulative_profit'],
+        mode='markers',
+        name='Trades Positivos',
+        marker=dict(color='#00FF00', size=10) # Fechamento do dict e definição do tamanho
+    )) # Fechamento do go.Scatter e do add_trace
