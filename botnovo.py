@@ -448,137 +448,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ==========================================================
-# BARRA LATERAL - GESTÃO DE TOKENS
-# ==========================================================
-with st.sidebar:
-    st.markdown("### 🎯 GESTÃO DE TOKENS")
-    
-    # Tabs para gerenciamento de tokens
-    tab1, tab2, tab3 = st.tabs(["➕ Adicionar", "📋 Lista", "⚙️ Config"])
-    
-    with tab1:
-        st.markdown("#### Adicionar Novo Token")
-        
-        # Input para CA do token
-        token_ca = st.text_area(
-            "CA do Token:",
-            placeholder="Cole o Contract Address aqui\nEx: 0x2170Ed0880ac9A755fd29B2688956BD959F933F8",
-            height=100,
-            key="input_token_ca"
-        )
-        
-        col_name, col_type = st.columns(2)
-        with col_name:
-            token_name = st.text_input(
-                "Nome personalizado:",
-                placeholder="Deixe em branco para usar o símbolo oficial",
-                key="input_token_name"
-            )
-        
-        with col_type:
-            token_type = st.selectbox(
-                "Tipo:",
-                ["MEME", "ALT", "DEFI", "STABLE", "CUSTOM"],
-                index=0,
-                key="select_token_type"
-            )
-        
-        # Botão para adicionar
-        if st.button("✅ Adicionar Token", use_container_width=True, type="primary"):
-            if token_ca.strip():
-                # Processar múltiplos tokens (um por linha)
-                tokens_to_add = [ca.strip() for ca in token_ca.strip().split('\n') if ca.strip()]
-                
-                added = 0
-                errors = []
-                
-                for ca in tokens_to_add:
-                    success, message = st.session_state.trading_engine.add_token(
-                        ca, 
-                        token_name if token_name else "TOKEN",
-                        token_type
-                    )
-                    
-                    if success:
-                        added += 1
-                    else:
-                        errors.append(f"{ca[:20]}...: {message}")
-                
-                if added > 0:
-                    st.success(f"✅ {added} token(s) adicionado(s)!")
-                
-                if errors:
-                    for error in errors:
-                        st.error(f"❌ {error}")
-                    
-                st.rerun()
-            else:
-                st.error("❌ Cole pelo menos um CA de token")
-    
-    with tab2:
-        st.markdown("#### Tokens Monitorados")
-        
-        engine = st.session_state.trading_engine
-        token_count = len(engine.token_pool)
-        
-        if token_count == 0:
-            st.info("📭 Nenhum token adicionado ainda")
-            
-            # Opção para carregar exemplos
-            if st.button("📥 Carregar Tokens de Exemplo", use_container_width=True):
-                loaded = engine.load_example_tokens()
-                st.success(f"✅ {loaded} tokens de exemplo carregados")
-                st.rerun()
-        else:
-            st.metric("Tokens Monitorados", token_count)
-            
-            # Listar tokens com opção de remover
-            for i, token in enumerate(engine.token_pool[:10]):  # Mostrar apenas 10
-                col_t1, col_t2 = st.columns([3, 1])
-                
-                with col_t1:
-                    st.write(f"**{token['name']}**")
-                    st.caption(f"`{token['ca'][:15]}...`")
-                    st.caption(f"Tipo: {token['type']} | Scans: {token.get('total_scans', 0)}")
-                
-                with col_t2:
-                    if st.button("🗑️", key=f"remove_{token['ca']}"):
-                        success, message = engine.remove_token(token['ca'])
-                        if success:
-                            st.success("Removido!")
-                            st.rerun()
-            
-            # Botão para limpar todos
-            if st.button("🧹 Limpar Todos os Tokens", use_container_width=True, type="secondary"):
-                count = engine.clear_all_tokens()
-                st.success(f"✅ {count} tokens removidos")
-                st.rerun()
-    
-    with tab3:
-        st.markdown("#### Configurações do Sistema")
-        
-        st.session_state.config['auto_trading'] = st.toggle(
-            "Trading Automático",
-            value=st.session_state.config['auto_trading'],
-            key="toggle_auto"
-        )
-        
-        st.session_state.config['max_trades_ativos'] = st.slider(
-            "Máx. Trades Ativos",
-            1, 10, 5,
-            key="slider_max_trades"
-        )
-        
-        st.session_state.config['tamanho_trade_percent'] = st.slider(
-            "Tamanho do Trade (%)",
-            0.5, 5.0, 1.0,
-            step=0.5,
-            key="slider_trade_size"
-        )
-        
-        st.divider()
-        
+# ===========================================
         # GESTÃO DE SALDO
         st.markdown("#### 💰 Gerenciar Saldo")
         
@@ -679,7 +549,185 @@ with col4:
         delta_color=lucro_color
     )
 
+#
+
 # ==========================================================
+# BARRA LATERAL - GESTÃO DE TOKENS
+# ==========================================================
+with st.sidebar:
+    st.markdown("### 🎯 GESTÃO DE TOKENS")
+    
+    # Tabs para gerenciamento de tokens
+    tab1, tab2, tab3 = st.tabs(["➕ Adicionar", "📋 Lista", "⚙️ Config"])
+    
+    with tab1:
+        st.markdown("#### Adicionar Novo Token")
+        
+        # Input para CA do token - VERSÃO PARA CELULAR
+        token_ca = st.text_input(
+            "CA do Token:",
+            placeholder="Cole o Contract Address aqui (0x...)",
+            key="input_token_ca_mobile",
+            help="Cole o endereço do contrato do token. Exemplo: 0x2170Ed0880ac9A755fd29B2688956BD959F933F8"
+        )
+        
+        col_name, col_type = st.columns(2)
+        with col_name:
+            token_name = st.text_input(
+                "Nome personalizado:",
+                placeholder="Ex: ETH, BNB, etc",
+                key="input_token_name_mobile"
+            )
+        
+        with col_type:
+            token_type = st.selectbox(
+                "Tipo:",
+                ["MEME", "ALT", "DEFI", "STABLE", "CUSTOM"],
+                index=0,
+                key="select_token_type_mobile"
+            )
+        
+        # Botão para adicionar um token
+        if st.button("✅ Adicionar Token", use_container_width=True, type="primary", key="btn_add_single"):
+            if token_ca.strip():
+                success, message = st.session_state.trading_engine.add_token(
+                    token_ca.strip(), 
+                    token_name if token_name else "TOKEN",
+                    token_type
+                )
+                
+                if success:
+                    st.success(message)
+                    # Limpar o campo após adicionar
+                    st.rerun()
+                else:
+                    st.error(f"❌ {message}")
+            else:
+                st.error("❌ Por favor, cole o CA do token")
+        
+        st.markdown("---")
+        st.markdown("#### Adicionar Múltiplos Tokens")
+        
+        # Opção para múltiplos tokens
+        multiple_tokens = st.text_area(
+            "Vários CAs (um por linha):",
+            placeholder="Cole vários CAs, um por linha\n0x...\n0x...\n0x...",
+            height=80,
+            key="input_multiple_tokens",
+            help="Para adicionar vários tokens de uma vez"
+        )
+        
+        if st.button("📥 Adicionar Vários Tokens", use_container_width=True, key="btn_add_multiple"):
+            if multiple_tokens.strip():
+                tokens_list = [ca.strip() for ca in multiple_tokens.strip().split('\n') if ca.strip()]
+                
+                added = 0
+                errors = []
+                
+                for ca in tokens_list:
+                    success, message = st.session_state.trading_engine.add_token(
+                        ca, 
+                        "TOKEN",  # Nome genérico
+                        token_type
+                    )
+                    
+                    if success:
+                        added += 1
+                    else:
+                        errors.append(f"{ca[:15]}...: {message}")
+                
+                if added > 0:
+                    st.success(f"✅ {added} token(s) adicionado(s)!")
+                
+                if errors:
+                    st.warning(f"⚠️ {len(errors)} token(s) falharam:")
+                    for error in errors:
+                        st.error(error)
+                
+                st.rerun()
+            else:
+                st.warning("⚠️ Cole pelo menos um CA")
+    
+    with tab2:
+        st.markdown("#### Tokens Monitorados")
+        
+        engine = st.session_state.trading_engine
+        token_count = len(engine.token_pool)
+        
+        if token_count == 0:
+            st.info("📭 Nenhum token adicionado ainda")
+            
+            # Opção para carregar exemplos
+            if st.button("📥 Carregar Tokens de Exemplo", use_container_width=True):
+                loaded = engine.load_example_tokens()
+                st.success(f"✅ {loaded} tokens de exemplo carregados")
+                st.rerun()
+        else:
+            st.metric("Tokens Monitorados", token_count)
+            
+            # Listar tokens com opção de remover
+            for i, token in enumerate(engine.token_pool[:10]):  # Mostrar apenas 10
+                with st.expander(f"{token['name']} ({token['type']})", expanded=False):
+                    col_t1, col_t2 = st.columns([3, 1])
+                    
+                    with col_t1:
+                        st.code(token['ca'][:30] + "...", language="text")
+                        st.caption(f"Adicionado: {token.get('added_time', 'N/A')}")
+                        st.caption(f"Scans: {token.get('total_scans', 0)} | Sinais: {token.get('signals_found', 0)}")
+                    
+                    with col_t2:
+                        if st.button("🗑️", key=f"remove_{token['ca'][:10]}"):
+                            success, message = engine.remove_token(token['ca'])
+                            if success:
+                                st.success("Token removido!")
+                                time.sleep(0.5)
+                                st.rerun()
+            
+            # Botão para limpar todos
+            if st.button("🗑️ Limpar Todos os Tokens", use_container_width=True, type="secondary"):
+                count = engine.clear_all_tokens()
+                st.success(f"✅ {count} tokens removidos")
+                time.sleep(0.5)
+                st.rerun()
+    
+    with tab3:
+        st.markdown("#### Configurações do Motor")
+        
+        st.checkbox(
+            "Auto Trading",
+            value=st.session_state.config['auto_trading'],
+            key="auto_trading",
+            help="Executa trades automaticamente quando sinais são encontrados"
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input(
+                "Máx. Trades Ativos",
+                min_value=1,
+                max_value=20,
+                value=st.session_state.config['max_trades_ativos'],
+                key="max_trades_ativos"
+            )
+        
+        with col2:
+            st.number_input(
+                "% por Trade",
+                min_value=0.1,
+                max_value=10.0,
+                value=st.session_state.config['tamanho_trade_percent'],
+                key="tamanho_trade_percent",
+                format="%.1f"
+            )
+        
+        # Atualizar configurações
+        if st.button("💾 Salvar Configurações", use_container_width=True):
+            st.session_state.config.update({
+                'auto_trading': st.session_state.auto_trading,
+                'max_trades_ativos': st.session_state.max_trades_ativos,
+                'tamanho_trade_percent': st.session_state.tamanho_trade_percent
+            })
+            st.success("Configurações salvas!") ==========================================================
 # SEÇÃO DE TRADES ATIVOS
 # ==========================================================
 st.markdown("### 📊 TRADES EM ANDAMENTO")
