@@ -524,4 +524,4 @@ def criar_grafico_performance():
             y=positive_trades['cumulative_profit'],
             mode='markers',
             name='Trades Positivos',
-            marker=dict(color='#00FF00', si
+            marker=dict(color='#00FF00', si)
